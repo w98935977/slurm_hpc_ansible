@@ -1,0 +1,10 @@
+[controller]
+slurmctld ansible_host=10.x.x.x ansible_user=user1
+
+[compute]
+slurm ansible_host=10.x.x.x ansible_user=user2
+allenssd ansible_host=10.x.x.x ansible_user=user3
+
+[all:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_become=yes

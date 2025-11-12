@@ -1,0 +1,18 @@
+---
+# 只在 compute 節點重啟 slurmd
+- name: restart slurmd
+  listen: "slurm config changed"
+  ansible.builtin.service:
+    name: slurmd
+    state: restarted
+    enabled: true
+  when: "'compute' in group_names"
+
+# 只在 controller 節點重啟 slurmctld
+- name: restart slurmctld
+  listen: "slurm config changed"
+  ansible.builtin.service:
+    name: slurmctld
+    state: restarted
+    enabled: true
+  when: "'controller' in group_names"

@@ -1,0 +1,6 @@
+AutoDetect=off
+{% set _n = (gpu_count | default(0) | int) %}
+{% set _type = (gpu_type | default('nvidia')) %}
+{% for i in range(0, _n) -%}
+Name=gpu Type={{ _type }} File=/dev/nvidia{{ i }}
+{% endfor -%}

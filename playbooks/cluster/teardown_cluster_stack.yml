@@ -1,0 +1,81 @@
+- name: Stop and disable MUNGE and Slurm
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    purge_stack_default: "{{ (purge_stack | default(true)) | bool }}"
+    wipe_system_users_default: "{{ (wipe_system_users | default(true)) | bool }}"
+
+  tasks:
+    - name: Stop services (best-effort)
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - munge
+        - slurmd
+        - slurmctld
+      failed_when: false
+
+    - name: Purge packages (apt) – ignore if not present
+      ansible.builtin.apt:
+        name:
+          - munge
+          - libmunge2
+          - libmunge-dev
+          - slurm-wlm
+          - slurmctld
+          - slurmd
+          - slurm-client
+        state: absent
+        purge: yes
+        autoremove: yes
+        update_cache: no
+      when: purge_stack_default
+      failed_when: false
+
+    - name: Remove config and state directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/munge
+        - /var/lib/munge
+        - /var/log/munge
+        - /run/munge
+        - /etc/slurm
+        - /var/spool/slurm
+        - /var/spool/slurmd
+        - /var/log/slurm
+      when: purge_stack_default
+      failed_when: false
+
+    - name: Remove system users (munge/slurm)
+      ansible.builtin.user:
+        name: "{{ item }}"
+        state: absent
+        remove: true
+      loop:
+        - munge
+        - slurm
+      when: wipe_system_users_default
+      failed_when: false
+
+- name: Revert /etc/hosts entries on all nodes
+  hosts: controller,compute
+  become: yes
+  gather_facts: no
+  vars:
+    revert_hosts_default: "{{ (revert_hosts | default(true)) | bool }}"
+    all_nodes: "{{ (groups['controller'] | default([])) + (groups['compute'] | default([])) }}"
+  tasks:
+    - name: Remove 'IP  hostname' lines exactly
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        state: absent
+        regexp: '^{{ (hostvars[item].ansible_host | regex_escape) }}\s+{{ item }}(\s|$)'
+      loop: "{{ all_nodes }}"
+      when:
+        - revert_hosts_default
+        - hostvars[item].ansible_host is defined

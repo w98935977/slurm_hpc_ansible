@@ -1,0 +1,187 @@
+---
+# 安裝 Slurm 及基本外掛
+- name: Install slurm packages
+  ansible.builtin.apt:
+    name:
+      - slurmctld
+      - slurmd
+      - slurm-wlm-basic-plugins
+    state: present
+    update_cache: true
+  become: true
+
+# 偵測常見的 PluginDir（Ubuntu 會是 slurm-wlm）
+- name: Stat common Slurm plugin directories
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/lib/x86_64-linux-gnu/slurm-wlm
+    - /usr/lib/x86_64-linux-gnu/slurm
+    - /usr/lib/slurm
+    - /usr/lib64/slurm
+  register: _plugdirs
+
+- name: Pick first existing plugin dir (or leave undefined)
+  ansible.builtin.set_fact:
+    slurm_plugin_dir: >-
+      {{
+        (_plugdirs.results
+          | selectattr('stat.exists')
+          | map(attribute='stat.path')
+          | list
+          | first)
+        | default('/usr/lib/x86_64-linux-gnu/slurm-wlm')
+      }}
+
+# ── Slurm 啟動前做 MUNGE 自我測試（較穩定） ───────────────────────────────
+- block:
+    - name: Generate test token (slurm preflight)
+      ansible.builtin.shell: |
+        set -o pipefail
+        SOCKET="{{ hostvars[inventory_hostname].munge_socket_path | default('/run/munge/munge.socket') }}"
+        export MUNGE_SOCKET="$SOCKET"
+        /usr/bin/munge -n -t 10 > /tmp/.munge_test.token
+        wc -c /tmp/.munge_test.token
+      args: { executable: /bin/bash }
+      register: _gen
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: _gen.rc == 0
+      become: true
+
+    - name: Decode token (slurm preflight)
+      ansible.builtin.shell: |
+        set -o pipefail
+        /usr/bin/unmunge < /tmp/.munge_test.token
+      args: { executable: /bin/bash }
+      register: _dec
+      changed_when: false
+      become: true
+
+    - name: Assert unmunge success (slurm preflight)
+      ansible.builtin.assert:
+        that:
+          - _dec.rc == 0
+          - (_dec.stdout is search('STATUS:\\s+Success'))
+        fail_msg: |
+          MUNGE preflight failed on {{ inventory_hostname }}.
+          --- decode rc: {{ _dec.rc }} ---
+          {{ _dec.stdout | default('') }}
+          {{ _dec.stderr | default('') }}
+  rescue:
+    - name: Dump munge service status (slurm preflight)
+      ansible.builtin.shell: systemctl status munge --no-pager -l || true
+      register: _svc
+      changed_when: false
+    - ansible.builtin.debug:
+        var: _svc.stdout
+    - name: Abort slurm preflight
+      ansible.builtin.fail:
+        msg: "MUNGE preflight failed; see status output above."
+
+# ── cgroup 與 GRES 設定（讓 /dev/nvidia* 被白名單） ─────────────────────────
+- name: Deploy cgroup.conf
+  ansible.builtin.template:
+    src: cgroup.conf.j2
+    dest: /etc/slurm/cgroup.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: "slurm config changed"
+  become: true
+
+# 計算節點偵測 GPU 張數（nvidia-smi -L）
+- name: Detect GPU count on compute (nvidia-smi -L)
+  ansible.builtin.shell: "nvidia-smi -L | wc -l"
+  args: { executable: /bin/bash }
+  register: _gpu_cnt
+  changed_when: false
+  failed_when: false
+  when: "'compute' in group_names"
+
+- name: Set gpu_count fact for template
+  ansible.builtin.set_fact:
+    gpu_count: "{{ (_gpu_cnt.stdout | default('0')) | int }}"
+  when: "'compute' in group_names"
+
+- name: Deploy gres.conf (explicit /dev mapping)
+  ansible.builtin.template:
+    src: gres.conf.j2
+    dest: /etc/slurm/gres.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: "slurm config changed"
+  become: true
+
+# ── 供 slurm.conf 使用的 CPU/記憶體粗略事實 ─────────────────────────────────
+- name: Derive simple CPU/memory facts for template
+  ansible.builtin.set_fact:
+    slurm_sockets: "{{ ansible_facts['processor_count'] | default(1) | int }}"
+    slurm_cores_per_socket: "{{ ansible_facts['processor_cores'] | default(1) | int }}"
+    slurm_threads_per_core: "{{ ansible_facts['processor_threads_per_core'] | default(1) | int }}"
+    slurm_real_mem: >-
+      {{ [ (ansible_facts['memtotal_mb'] | default(2048) | int) - 1536 , 1024 ] | max }}
+
+# spool 目錄權限
+- name: Ensure spool directories exist with correct ownership
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: '0755'
+  loop:
+    - { path: /var/spool/slurm,  owner: slurm, group: slurm }
+    - { path: /var/spool/slurmd, owner: root,  group: root }
+  become: true
+
+# 主設定
+- name: Deploy slurm.conf
+  ansible.builtin.template:
+    src: slurm.conf.j2
+    dest: /etc/slurm/slurm.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: "slurm config changed"
+  become: true
+
+# 角色推斷
+- name: Set slurm_role automatically if not provided
+  ansible.builtin.set_fact:
+    slurm_role: "{{ 'controller' if 'controller' in group_names else 'compute' }}"
+  when: slurm_role is not defined
+
+# 啟動服務
+- name: Enable and start slurmd on compute nodes
+  ansible.builtin.service:
+    name: slurmd
+    state: started
+    enabled: true
+  when: slurm_role == "compute"
+  become: true
+
+- name: Enable and start slurmctld on controller
+  ansible.builtin.service:
+    name: slurmctld
+    state: started
+    enabled: true
+  when: slurm_role == "controller"
+  become: true
+
+# 讓 controller 讀入變更（包含 GRES、cgroup）
+- name: Reconfigure slurmctld (reflect new config) on controller
+  ansible.builtin.command: scontrol reconfigure
+  when: slurm_role == "controller"
+  changed_when: true
+  become: true
+
+# 收尾：刪除暫存 token
+- name: Remove temp token (slurm preflight)
+  ansible.builtin.file:
+    path: /tmp/.munge_test.token
+    state: absent
+  become: true
+  failed_when: false

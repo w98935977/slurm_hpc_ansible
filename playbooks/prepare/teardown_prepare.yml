@@ -1,0 +1,128 @@
+---
+# ── 先在 controller 清除對 compute 的 known_hosts（含 hashed） ───────────────
+- name: (optional) Remove compute entries from controller's known_hosts
+  hosts: slurmctld
+  become: yes
+  gather_facts: false
+  vars:
+    candidate_known_hosts:
+      - "/home/ansible/.ssh/known_hosts"
+      - "/root/.ssh/known_hosts"
+      - "/home/tommy/.ssh/known_hosts"
+
+  pre_tasks:
+    - name: Stat candidate known_hosts files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: kh_stats
+      loop: "{{ candidate_known_hosts }}"
+
+    - name: Build list of existing known_hosts files
+      ansible.builtin.set_fact:
+        kh_files: "{{ kh_stats.results
+                      | selectattr('stat.exists','defined')
+                      | selectattr('stat.exists')
+                      | map(attribute='item')
+                      | list }}"
+
+    - name: Build compute targets (hostnames + IPs)
+      ansible.builtin.set_fact:
+        compute_targets: >-
+          {{
+            (
+              (groups['compute'] | default([]))
+              +
+              ((groups['compute'] | default([]))
+                | map('extract', hostvars, 'ansible_host')
+                | select('defined') | list)
+            ) | unique
+          }}
+
+  tasks:
+    # 1) 以「名字」刪，處理非 hashed
+    - name: Remove entries by hostname/IP (state=absent)
+      ansible.builtin.known_hosts:
+        path: "{{ item.0 }}"
+        name: "{{ item.1 }}"
+        state: absent
+      loop: "{{ (kh_files | default([])) | product(compute_targets | default([])) | list }}"
+      when:
+        - (kh_files | default([])) | length > 0
+        - (compute_targets | default([])) | length > 0
+      ignore_errors: true
+
+    # 2) 以「公鑰」刪，處理 hashed 條目（抓 ed25519 / rsa）
+    - name: Scan host keys (ed25519,rsa) for each target
+      ansible.builtin.shell: |
+        set -o pipefail
+        ssh-keyscan -T 3 -t {{ item.1 }} {{ item.0 }} 2>/dev/null || true
+      args: { executable: /bin/bash }
+      loop: "{{ (compute_targets | default([])) | product(['ed25519','rsa']) | list }}"
+      register: scanned_keys
+      changed_when: false
+      when: (compute_targets | default([])) | length > 0
+
+    - name: Remove hashed entries by key material
+      ansible.builtin.known_hosts:
+        path: "{{ item.0 }}"
+        key: "{{ item.1 }}"
+        state: absent
+      loop: >-
+        {{
+          kh_files | default([]) | product(
+            (scanned_keys.results | map(attribute='stdout') | map('trim') | select('length') | list)
+          ) | list
+        }}
+      when:
+        - (kh_files | default([])) | length > 0
+        - (scanned_keys.results | map(attribute='stdout') | map('trim') | select('length') | list) | length > 0
+      ignore_errors: true
+      no_log: true   # 不把 host key 打到 log（純潔點）
+
+# ── 然後才在所有節點拆管理者 ────────────────────────────────────────────────
+- name: Teardown management user and sudoers on all nodes
+  hosts: all
+  become: yes
+  gather_facts: false
+
+  vars:
+    default_mgmt_user: "ansible"
+
+  pre_tasks:
+    - name: Resolve effective mgmt user (from -e mgmt_user=... or default)
+      ansible.builtin.set_fact:
+        mgmt_user_eff: "{{ mgmt_user | default(default_mgmt_user) }}"
+
+    # 防呆：確保目前連線用的帳號不是要刪的（避免把自己砍掉）
+    - name: Check current remote user
+      ansible.builtin.command: whoami
+      register: _whoami
+      changed_when: false
+
+    - name: Guardrail - refuse to remove the user we are connected as
+      ansible.builtin.assert:
+        that:
+          - _whoami.stdout != mgmt_user_eff
+        fail_msg: >-
+          You are connected as '{{ _whoami.stdout }}', which equals mgmt_user_eff ('{{ mgmt_user_eff }}').
+          Aborting to avoid killing the live SSH session. Use an inventory (e.g. prepare.ini) with a different user.
+
+  tasks:
+    - name: Remove NOPASSWD sudoers file
+      ansible.builtin.file:
+        path: "/etc/sudoers.d/{{ mgmt_user_eff }}-nopasswd"
+        state: absent
+        mode: '0000'
+
+    - name: Remove management user's authorized_keys (best effort)
+      ansible.builtin.file:
+        path: "/home/{{ mgmt_user_eff }}/.ssh/authorized_keys"
+        state: absent
+      ignore_errors: true
+
+    - name: Remove management user entirely (optional)
+      ansible.builtin.user:
+        name: "{{ mgmt_user_eff }}"
+        state: absent
+        remove: true
+      when: wipe_user | default(true)

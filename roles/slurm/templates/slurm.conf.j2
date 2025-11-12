@@ -1,0 +1,59 @@
+# ===== Basic =====
+ClusterName={{ cluster_name | default('demo') }}
+SlurmctldHost={{ groups['controller'][0] }}
+
+SlurmUser=slurm
+SlurmdUser=root
+AuthType=auth/munge
+StateSaveLocation=/var/spool/slurm
+SlurmdSpoolDir=/var/spool/slurmd
+MailProg=/bin/true
+ReturnToService=2
+MpiDefault=none
+
+# ===== Plugin directory =====
+{# 由 tasks 先偵測 slurm_plugin_dir；沒有就用 Ubuntu 套件的預設路徑 #}
+{% if slurm_plugin_dir is defined and slurm_plugin_dir %}
+PluginDir={{ slurm_plugin_dir }}
+{% else %}
+PluginDir=/usr/lib/x86_64-linux-gnu/slurm-wlm
+{% endif %}
+
+# ===== Scheduling / Select =====
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+DefMemPerCPU=2048       # 預設每 CPU 給 2GB
+MaxMemPerCPU=131072     # 每 CPU 上限 128GB
+
+# ===== cgroup (recommended) =====
+ProctrackType=proctrack/cgroup
+TaskPlugin=task/cgroup
+JobAcctGatherType=jobacct_gather/cgroup
+JobAcctGatherFrequency=30
+
+# ===== Configless =====
+SlurmctldParameters=enable_configless
+
+# ===== GPU GRES =====
+GresTypes=gpu
+
+# 混合核心/大小核拓撲常見：避免拓撲誤判
+SlurmdParameters=allow_ecores
+
+# ===== Nodes (facts 驅動；避免在 template 做數學/比較) =====
+# 這些變數在 tasks 已預先以 int 計算：
+# - slurm_sockets / slurm_cores_per_socket / slurm_threads_per_core / slurm_real_mem
+# - gpu_count
+{% for host in groups['compute'] %}
+NodeName={{ host }} NodeAddr={{ hostvars[host].ansible_host | default(host) }} \
+Sockets={{ (hostvars[host].slurm_sockets | default(1)) | int }} \
+CoresPerSocket={{ (hostvars[host].slurm_cores_per_socket | default(1)) | int }} \
+ThreadsPerCore={{ (hostvars[host].slurm_threads_per_core | default(1)) | int }} \
+RealMemory={{ (hostvars[host].slurm_real_mem | default(1024)) | int }}{% if (hostvars[host].gpu_count | default(0) | int) > 0 %} \
+Gres=gpu:{{ (hostvars[host].gpu_count | int) }}{% endif %} \
+State=UNKNOWN
+{% endfor %}
+
+# ===== Partition =====
+PartitionName=debug Nodes={{ (groups['compute'] | default([])) | join(',') }} Default=YES MaxTime=INFINITE State=UP

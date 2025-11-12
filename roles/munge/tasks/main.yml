@@ -1,0 +1,203 @@
+---
+# Ubuntu/Debian 依賴
+- name: Install dependencies (Debian/Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - libgcrypt20
+      - libgcrypt20-dev
+      - gcc
+      - make
+      - bzip2
+      - zlib1g-dev
+      - munge
+      - libmunge-dev
+    state: present
+    update_cache: yes
+  when: ansible_facts['os_family'] == 'Debian'
+  become: true
+
+# munge 帳號與目錄
+- name: Ensure munge group exists
+  ansible.builtin.group:
+    name: munge
+    system: yes
+    state: present
+  become: true
+
+- name: Ensure munge user exists
+  ansible.builtin.user:
+    name: munge
+    group: munge
+    shell: /usr/sbin/nologin
+    system: yes
+    create_home: no
+    state: present
+  become: true
+
+- name: Create MUNGE directories with proper ownership
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: munge
+    group: munge
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/munge,  mode: '0700' }
+    - { path: /var/log/munge, mode: '0700' }
+    - { path: /var/lib/munge, mode: '0700' }
+    - { path: /run/munge,     mode: '0755' }
+  become: true
+
+# 只在 controller[0] 產生 key（若不存在）
+- name: Generate munge.key on key source host (controller[0]) if missing
+  ansible.builtin.command: /usr/sbin/mungekey --verbose --force -k /etc/munge/munge.key
+  args:
+    creates: /etc/munge/munge.key
+  when: inventory_hostname == groups['controller'][0]
+  become: true
+
+- name: Fix key ownership and perms on key source host
+  ansible.builtin.file:
+    path: /etc/munge/munge.key
+    owner: munge
+    group: munge
+    mode: '0400'
+  when: inventory_hostname == groups['controller'][0]
+  become: true
+
+# 從 controller[0] 讀 key 到「控制端記憶體」
+- name: Slurp munge.key from key source host (run once)
+  ansible.builtin.slurp:
+    src: /etc/munge/munge.key
+  register: _munge_key_blob
+  delegate_to: "{{ groups['controller'][0] }}"
+  run_once: true
+  no_log: true
+
+# 分發到所有節點（不在控制端落地）
+- name: Deploy munge.key to all nodes
+  ansible.builtin.copy:
+    dest: /etc/munge/munge.key
+    content: "{{ _munge_key_blob.content | b64decode }}"
+    owner: munge
+    group: munge
+    mode: '0400'
+  notify: restart munge
+  become: true
+
+# 啟動與等待前的清理
+- name: Remove stale munge socket if present
+  ansible.builtin.file:
+    path: /run/munge/munge.socket
+    state: absent
+  become: true
+  failed_when: false
+
+- name: Ensure munge service enabled and started
+  ansible.builtin.service:
+    name: munge
+    state: started
+    enabled: yes
+  become: true
+
+- name: Restart munge after permission fixes
+  ansible.builtin.service:
+    name: munge
+    state: restarted
+    enabled: yes
+  become: true
+
+# 偵測實際 socket（部分套件會用 munge.socket.N）
+- name: Detect active MUNGE socket path
+  ansible.builtin.shell: |
+    set -o pipefail
+    ls -1 /run/munge/munge.socket* 2>/dev/null | head -n1
+  args: { executable: /bin/bash }
+  register: _socket_list
+  changed_when: false
+
+- name: Set fact for munge socket path
+  ansible.builtin.set_fact:
+    munge_socket_path: "{{ (_socket_list.stdout | trim) if (_socket_list.stdout | trim | length > 0) else '/run/munge/munge.socket' }}"
+
+# 建立標準路徑 symlink，讓預設客戶端與 Slurm 都能找到
+- name: Ensure canonical socket symlink exists (/run/munge/munge.socket)
+  ansible.builtin.file:
+    path: /run/munge/munge.socket
+    src: "{{ munge_socket_path }}"
+    state: link
+    owner: munge
+    group: munge
+  when:
+    - munge_socket_path is defined
+    - munge_socket_path != '/run/munge/munge.socket'
+  become: true
+
+# 功能性驗證（兩段式：先產 token 再解碼；顯式指定 socket；失敗時輸出詳細）
+- block:
+    - name: Generate test token with munge (explicit socket)
+      ansible.builtin.shell: |
+        set -o pipefail
+        SOCKET="{{ munge_socket_path | default('/run/munge/munge.socket') }}"
+        /usr/bin/munge -S "$SOCKET" -n -t 10 > /tmp/.munge_test.token
+        wc -c /tmp/.munge_test.token
+      args: { executable: /bin/bash }
+      register: _gen
+      changed_when: false
+      become: true
+
+    - name: Decode token with unmunge and assert success
+      ansible.builtin.shell: |
+        set -o pipefail
+        /usr/bin/unmunge < /tmp/.munge_test.token
+      args: { executable: /bin/bash }
+      register: _dec
+      changed_when: false
+      become: true
+
+    - name: Assert unmunge shows Success
+      ansible.builtin.assert:
+        that:
+          - _gen.rc == 0
+          - _dec.rc == 0
+          - (_dec.stdout is search('STATUS:\s+Success'))
+        fail_msg: |
+          MUNGE self-test failed.
+          --- generate rc: {{ _gen.rc }} ---
+          {{ _gen.stdout | default('') }}
+          {{ _gen.stderr | default('') }}
+          --- decode rc: {{ _dec.rc }} ---
+          {{ _dec.stdout | default('') }}
+          {{ _dec.stderr | default('') }}
+  rescue:
+    - name: Probe MUNGE runtime dir
+      ansible.builtin.shell: |
+        echo "== ls -l /run/munge =="; ls -l /run/munge || true
+        echo "== find sockets under /run/munge =="; find /run/munge -maxdepth 1 -type s -print || true
+        echo "== ss -lx | grep munge =="; ss -lx | grep -i munge || true
+        echo "== env subset =="; env | egrep '^(MUNGE|PATH|SHELL|USER)=' || true
+      register: _munge_probe
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ _munge_probe.stdout }}"
+
+    - name: Show munge & unmunge absolute paths
+      ansible.builtin.shell: "command -v munge && command -v unmunge || true"
+      register: _paths
+      changed_when: false
+
+    - ansible.builtin.debug:
+        var: _paths.stdout
+
+    - name: Fail because functional self-test failed
+      ansible.builtin.fail:
+        msg: "MUNGE did not pass self-test. See logs above."
+
+# 收尾：刪除暫存 token（不影響功能，純清潔）
+- name: Remove temp token
+  ansible.builtin.file:
+    path: /tmp/.munge_test.token
+    state: absent
+  become: true
+  failed_when: false

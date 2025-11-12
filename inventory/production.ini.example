@@ -1,0 +1,6 @@
+[controller]
+slurmctld ansible_host=10.x.x.x slurm_role=controller
+
+[compute]
+slurm ansible_host=10.x.x.x slurm_role=compute
+allenssd ansible_host=10.x.x.x slurm_role=compute

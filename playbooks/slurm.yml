@@ -1,0 +1,5 @@
+- hosts: controller
+  roles: [ slurm ]
+
+- hosts: compute
+  roles: [ slurm ]

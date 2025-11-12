@@ -1,0 +1,38 @@
+# 編譯/暫存
+*.retry
+*.swp
+*.swo
+__pycache__/
+*.pyc
+.cache/
+.venv/
+.DS_Store
+
+# 編輯器
+.vscode/
+.idea/
+
+# SSH / 金鑰 / 憑證
+*.pem
+*.key
+*.crt
+*.pub
+.ssh/
+**/known_hosts
+
+# Ansible 常見機密
+.vault_pass.txt
+ansible.cfg  # 若含 vault_password_file 等敏感路徑，建議忽略
+**/vault_password_file
+
+# MUNGE key（一定不要進 repo）
+**/munge.key
+
+# 你的真實 inventory（保留「範本」即可）
+inventory/*.ini
+!inventory/prepare.ini.example
+!inventory/production.ini.example
+
+# 任何你臨時產出的機密/主機特定檔
+host_vars/*/      # 建議用 vault 加密後才 commit
+group_vars/*/     # 同上（如果含密碼/金鑰）
