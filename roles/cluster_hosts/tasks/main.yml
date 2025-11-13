@@ -1,0 +1,13 @@
+---
+- name: Build host list from configured groups
+  ansible.builtin.set_fact:
+    cluster_hosts_target_nodes: "{{ cluster_hosts_groups | map('extract', groups, []) | list | flatten | unique }}"
+
+- name: Add cluster hosts to /etc/hosts
+  ansible.builtin.lineinfile:
+    path: "{{ cluster_hosts_path }}"
+    regexp: '^{{ (hostvars[item].ansible_host | regex_escape) }}\s+{{ item }}(\s|$)'
+    line: "{{ hostvars[item].ansible_host }} {{ item }}"
+    state: present
+  loop: "{{ cluster_hosts_target_nodes | default([]) }}"
+  when: hostvars[item].ansible_host is defined

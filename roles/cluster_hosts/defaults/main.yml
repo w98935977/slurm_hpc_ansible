@@ -1,0 +1,5 @@
+---
+cluster_hosts_groups:
+  - controller
+  - compute
+cluster_hosts_path: /etc/hosts

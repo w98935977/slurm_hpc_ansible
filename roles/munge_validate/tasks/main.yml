@@ -1,0 +1,50 @@
+---
+- name: Ensure ~/.ssh exists for mgmt_user on controller
+  become: yes
+  become_user: "{{ mgmt_user }}"
+  ansible.builtin.file:
+    path: "/home/{{ mgmt_user }}/.ssh"
+    state: directory
+    mode: '0700'
+
+- name: Build keyscan target list (prefer ansible_host/ip)
+  ansible.builtin.set_fact:
+    keyscan_targets: "{{ (keyscan_targets | default([])) + [ hostvars[item].ansible_host | default(item) ] }}"
+  loop: "{{ groups['compute'] | default([]) }}"
+
+- name: Add compute host keys to controller known_hosts (hashed)
+  become: yes
+  become_user: "{{ mgmt_user }}"
+  ansible.builtin.known_hosts:
+    path: "/home/{{ mgmt_user }}/.ssh/known_hosts"
+    name: "{{ item }}"
+    key: "{{ lookup('pipe', 'ssh-keyscan -T 5 -H -t ed25519,rsa ' ~ item) }}"
+    state: present
+  loop: "{{ keyscan_targets | default([]) }}"
+  changed_when: false
+  when: (keyscan_targets | default([])) | length > 0
+
+- name: Generate and test munge token on each compute
+  become: yes
+  become_user: "{{ mgmt_user }}"
+  ansible.builtin.shell: |
+    set -o pipefail
+    munge -n -t 10 | ssh {{ munge_validate_ssh_opts }} {{ hostvars[item].ansible_host | default(item) }} "bash -lc 'unmunge'"
+  args:
+    executable: /bin/bash
+  loop: "{{ groups['compute'] | default([]) }}"
+  register: munge_test_results
+  failed_when: false
+  changed_when: false
+
+- name: Display munge validation results
+  ansible.builtin.debug:
+    msg: |
+      Host: {{ item.item }}
+      Target: {{ hostvars[item.item].ansible_host | default(item.item) }}
+      Result: {{ 'SUCCESS' if (item.rc | int) == 0 else 'FAILED' }}
+      ---- stdout ----
+      {{ (item.stdout | default('')) | trim }}
+      ---- stderr ----
+      {{ (item.stderr | default('')) | trim }}
+  loop: "{{ munge_test_results.results | default([]) }}"

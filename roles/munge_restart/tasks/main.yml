@@ -1,0 +1,6 @@
+---
+- name: Ensure munge service is restarted and enabled
+  ansible.builtin.service:
+    name: munge
+    state: restarted
+    enabled: yes

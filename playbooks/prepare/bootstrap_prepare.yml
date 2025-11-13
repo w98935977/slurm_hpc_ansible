@@ -1,216 +1,56 @@
 ---
-# ── Play 1：所有節點共同基線 ───────────────────────────────────────────────
+# High-level playbook that calls the bootstrap_prepare role sub-tasks
+# Play 1: baseline on all nodes
 - name: Bootstrap new Slurm nodes (controller + compute)
   hosts: all
   become: yes
-  gather_facts: no
-  vars:
-    # 想建立的「管理帳號」名稱（可在 inventory 覆蓋），沒給就用 ansible
-    mgmt_user_final: "{{ mgmt_user | default('ansible') }}"
-    mgmt_user_home:  "/home/{{ mgmt_user_final }}"
+  gather_facts: yes
+  roles:
+    - role: bootstrap_prepare
 
-    # 【可選】控制端(你的電腦/WSL)公鑰；若不需要可留空或移除
-    mgmt_pubkey_src: "~/.ssh/id_rsa.pub"
-
-  tasks:
-    - name: Ensure management user exists
-      ansible.builtin.user:
-        name: "{{ mgmt_user_final }}"
-        shell: /bin/bash
-        create_home: yes
-        groups: sudo
-        append: yes
-        state: present
-
-    - name: Allow passwordless sudo for management user
-      ansible.builtin.copy:
-        dest: "/etc/sudoers.d/{{ mgmt_user_final }}-nopasswd"
-        content: "{{ mgmt_user_final }} ALL=(ALL) NOPASSWD:ALL\n"
-        mode: '0440'
-        owner: root
-        group: root
-        validate: '/usr/sbin/visudo -cf %s'
-
-    - name: Ensure .ssh directory
-      ansible.builtin.file:
-        path: "{{ mgmt_user_home }}/.ssh"
-        state: directory
-        owner: "{{ mgmt_user_final }}"
-        group: "{{ mgmt_user_final }}"
-        mode: '0700'
-
-    # 先安全讀檔：file 不存在時不報錯
-    - name: (optional) Read controller public key if present
-      vars:
-        _src: "{{ mgmt_pubkey_src | default('') }}"
-      ansible.builtin.set_fact:
-        mgmt_pubkey_content: "{{ lookup('file', _src, errors='ignore') }}"
-      when: _src | length > 0
-      tags: [local-pubkey]
-
-    - name: Install provided public key into management user (optional)
-      ansible.builtin.authorized_key:
-        user: "{{ mgmt_user_final }}"
-        key: "{{ mgmt_pubkey_content }}"
-        state: present
-        manage_dir: false
-      when:
-        - mgmt_pubkey_content is defined
-        - mgmt_pubkey_content | length > 0
-      tags: [local-pubkey]
-
-    - name: Disable root SSH login
-      ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        regexp: '^#?PermitRootLogin'
-        line: 'PermitRootLogin no'
-        validate: '/usr/sbin/sshd -t -f %s'
-      notify:
-        - Restart SSH (Debian/Ubuntu)
-        - Restart SSH (RHEL/CentOS)
-
-  handlers:
-    - name: Restart SSH (Debian/Ubuntu)
-      ansible.builtin.service:
-        name: ssh
-        state: restarted
-      ignore_errors: true
-
-    - name: Restart SSH (RHEL/CentOS)
-      ansible.builtin.service:
-        name: sshd
-        state: restarted
-      ignore_errors: true
-
-
-# ── Play 2：在 controller 產生「管理帳號」的 SSH 金鑰 ───────────────────────
+# Play 2: create/read controller management user's SSH key
 - name: Ensure controller management user has SSH key
   hosts: slurmctld
-  gather_facts: false
+  become: yes
+  gather_facts: no
   vars:
-    mgmt_user_final: "{{ mgmt_user | default('ansible') }}"
-    mgmt_user_home:  "/home/{{ mgmt_user_final }}"
-    # 想用 ed25519 就把 mgmt_key_type 設為 ed25519
-    mgmt_key_type: rsa          # rsa 或 ed25519
-    mgmt_key_bits: 4096         # 只在 rsa 時有用
-    mgmt_key_file: "{{ 'id_rsa' if mgmt_key_type == 'rsa' else 'id_ed25519' }}"
+    mgmt_key_type: "rsa"
+    mgmt_key_bits: 4096
   tasks:
-    - name: Ensure ~/.ssh exists on controller (management user)
-      become: yes
-      become_user: "{{ mgmt_user_final }}"
-      ansible.builtin.file:
-        path: "{{ mgmt_user_home }}/.ssh"
-        state: directory
-        mode: '0700'
+    - name: Run controller tasks (generate & read key)
+      include_role:
+        name: bootstrap_prepare
+        tasks_from: controller.yml
 
-    - name: Generate SSH key if not present (controller management user)
-      become: yes
-      become_user: "{{ mgmt_user_final }}"
-      ansible.builtin.command: >
-        ssh-keygen
-        -t {{ mgmt_key_type }}
-        {% if mgmt_key_type == 'rsa' %}-b {{ mgmt_key_bits }}{% endif %}
-        -f {{ mgmt_user_home }}/.ssh/{{ mgmt_key_file }}
-        -N ""
-      args:
-        creates: "{{ mgmt_user_home }}/.ssh/{{ mgmt_key_file }}"
-
-    - name: Read controller's public key (management user)
-      become: yes
-      ansible.builtin.slurp:
-        src: "{{ mgmt_user_home }}/.ssh/{{ mgmt_key_file }}.pub"
-      register: controller_pubkey
-
-    - name: Assert controller_pubkey was read
-      ansible.builtin.assert:
-        that:
-          - controller_pubkey is defined
-          - controller_pubkey.content is defined
-
-
-# ── Play 3：把 controller 的公鑰分發到所有 compute ─────────────────────────
+# Play 3: distribute controller public key to compute
 - name: Distribute controller SSH key to compute nodes
   hosts: compute
   become: yes
-  gather_facts: false
-  vars:
-    mgmt_user_final: "{{ mgmt_user | default('ansible') }}"
-    mgmt_user_home:  "/home/{{ mgmt_user_final }}"
-  pre_tasks:
-    - name: Pick controller host (first of group)
-      ansible.builtin.set_fact:
-        controller_host_name: "{{ groups['controller'][0] }}"
-      when: groups['controller'] | length > 0
-
-    - name: Assert controller host present and pubkey available
-      ansible.builtin.assert:
-        that:
-          - controller_host_name is defined
-          - hostvars[controller_host_name] is defined
-          - hostvars[controller_host_name].controller_pubkey is defined
-          - hostvars[controller_host_name].controller_pubkey.content is defined
-        fail_msg: "找不到 controller 的公鑰。請先完整執行上一個 Play（Ensure controller management user has SSH key）。"
-
+  gather_facts: no
   tasks:
-    - name: Ensure .ssh directory exists on compute
-      ansible.builtin.file:
-        path: "{{ mgmt_user_home }}/.ssh"
-        state: directory
-        owner: "{{ mgmt_user_final }}"
-        group: "{{ mgmt_user_final }}"
-        mode: '0700'
+    - name: Distribute controller pubkey to compute nodes
+      include_role:
+        name: bootstrap_prepare
+        tasks_from: distribute.yml
 
-    - name: Append controller public key to compute authorized_keys (idempotent)
-      ansible.builtin.authorized_key:
-        user: "{{ mgmt_user_final }}"
-        key: "{{ hostvars[controller_host_name].controller_pubkey.content | b64decode }}"
-        state: present
-        manage_dir: false
-
-
-# ── Play 4：在 controller 預先信任所有 compute 的 host key（用 IP 掃描） ──────
+# Play 4: prime known_hosts on controller
 - name: Prime known_hosts on controller for all compute nodes
   hosts: slurmctld
-  gather_facts: false
-  vars:
-    mgmt_user_final: "{{ mgmt_user | default('ansible') }}"
-    mgmt_user_home:  "/home/{{ mgmt_user_final }}"
+  become: yes
+  gather_facts: no
   tasks:
-    - name: Build keyscan target list (prefer ansible_host/ip)
-      ansible.builtin.set_fact:
-        keyscan_targets: "{{ keyscan_targets | default([]) + [ (hostvars[item].ansible_host | default(item)) ] }}"
-      loop: "{{ groups['compute'] | default([]) }}"
+    - name: Add compute nodes to known_hosts (controller)
+      include_role:
+        name: bootstrap_prepare
+        tasks_from: known_hosts.yml
 
-    - name: Add compute nodes to known_hosts (scan by IP/ansible_host)
-      become: yes
-      become_user: "{{ mgmt_user_final }}"
-      ansible.builtin.known_hosts:
-        path: "{{ mgmt_user_home }}/.ssh/known_hosts"
-        name: "{{ item }}"
-        key: "{{ lookup('pipe', 'ssh-keyscan -T 3 -H -t ed25519,rsa ' ~ item) }}"
-        state: present
-      loop: "{{ keyscan_targets | default([]) }}"
-      when: (keyscan_targets | default([])) | length > 0
-
-
-# ── Play 5：從 controller 驗證能免密 ssh 到各 compute（非互動、CI 友善） ──────
+# Play 5: verify controller->compute passwordless SSH
 - name: Verify controller->compute passwordless SSH
   hosts: slurmctld
-  gather_facts: false
-  vars:
-    mgmt_user_final: "{{ mgmt_user | default('ansible') }}"
+  become: yes
+  gather_facts: no
   tasks:
-    - name: Try SSH from controller to each compute (BatchMode)
-      become: yes
-      become_user: "{{ mgmt_user_final }}"
-      ansible.builtin.shell: >
-        ssh -o BatchMode=yes -o ConnectTimeout=3
-        {{ mgmt_user_final }}@{{ hostvars[item].ansible_host | default(item) }} hostname
-      register: ssh_result
-      changed_when: false
-      failed_when: false
-      loop: "{{ groups['compute'] | default([]) }}"
-
-    - name: Show SSH results
-      ansible.builtin.debug:
-        var: ssh_result.results
+    - name: Verify SSH connectivity (controller -> compute)
+      include_role:
+        name: bootstrap_prepare
+        tasks_from: verify.yml
