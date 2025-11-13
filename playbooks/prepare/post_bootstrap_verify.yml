@@ -1,0 +1,95 @@
+---
+- name: Post-bootstrap verification (all nodes)
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    mgmt_user_final: "{{ mgmt_user | default('ansible') }}"
+    mgmt_user_home: "/home/{{ mgmt_user_final }}"
+    sudoers_file: "/etc/sudoers.d/{{ mgmt_user_final }}-nopasswd"
+
+  tasks:
+    - name: Check management user exists
+      ansible.builtin.command: "id -u {{ mgmt_user_final }}"
+      register: user_id
+      failed_when: user_id.rc != 0
+
+    - name: Check sudoers file exists and mode 0440
+      ansible.builtin.stat:
+        path: "{{ sudoers_file }}"
+      register: sudo_stat
+    - ansible.builtin.assert:
+        that:
+          - sudo_stat.stat.exists
+          - sudo_stat.stat.mode is match('^0440$|^440$')
+        fail_msg: "{{ sudoers_file }} missing or wrong mode"
+
+    - name: Check .ssh directory exists and perms
+      ansible.builtin.stat:
+        path: "{{ mgmt_user_home }}/.ssh"
+      register: sshdir
+    - ansible.builtin.assert:
+        that:
+          - sshdir.stat.exists
+          - sshdir.stat.mode is match('^0700$|^700$')
+        fail_msg: ".ssh missing or wrong perms for {{ mgmt_user_final }}"
+
+    - name: Check sshd PermitRootLogin setting
+      ansible.builtin.shell: "grep -E '^\\s*PermitRootLogin\\s+' /etc/ssh/sshd_config || true"
+      register: permitroot
+      changed_when: false
+    - ansible.builtin.debug:
+        var: permitroot.stdout
+
+- name: Post-bootstrap verification (controller checks)
+  hosts: slurmctld
+  become: yes
+  gather_facts: no
+  vars:
+    mgmt_user_final: "{{ mgmt_user | default('ansible') }}"
+    mgmt_user_home: "/home/{{ mgmt_user_final }}"
+
+  tasks:
+    - name: Check controller public key present
+      ansible.builtin.stat:
+        path: "{{ mgmt_user_home }}/.ssh/id_rsa.pub"
+      register: ctrl_rsa
+    - name: Check controller ed25519 key present
+      ansible.builtin.stat:
+        path: "{{ mgmt_user_home }}/.ssh/id_ed25519.pub"
+      register: ctrl_ed
+    - ansible.builtin.assert:
+        that:
+          - ctrl_rsa.stat.exists or ctrl_ed.stat.exists
+        fail_msg: "No controller public key found in {{ mgmt_user_home }}/.ssh/"
+
+    - name: Build list of compute targets
+      ansible.builtin.set_fact:
+        compute_targets: "{{ groups['compute'] | default([]) }}"
+
+    - name: Ensure known_hosts contains compute entries (quick check)
+      ansible.builtin.shell: |
+        grep -F "{{ item }}" "{{ mgmt_user_home }}/.ssh/known_hosts" || echo "missing:{{ item }}"
+      loop: "{{ compute_targets }}"
+      register: kh_checks
+      ignore_errors: yes
+    - ansible.builtin.debug:
+        var: kh_checks.results
+
+    - name: Verify passwordless SSH to each compute (BatchMode)
+      become_user: "{{ mgmt_user_final }}"
+      ansible.builtin.shell: |
+        ssh -o BatchMode=yes -o ConnectTimeout=3 {{ mgmt_user_final }}@{{ hostvars[item].ansible_host | default(item) }} hostname
+      loop: "{{ compute_targets }}"
+      register: ssh_verify
+      changed_when: false
+      failed_when: false
+
+    - name: Assert all passwordless SSH checks passed
+      ansible.builtin.assert:
+        that:
+          - (ssh_verify.results | default([]) | selectattr('rc','ne',0) | list | length) == 0
+        fail_msg: >-
+          Some hosts failed passwordless SSH. See ssh_verify for details.
+    - ansible.builtin.debug:
+        var: ssh_verify.results

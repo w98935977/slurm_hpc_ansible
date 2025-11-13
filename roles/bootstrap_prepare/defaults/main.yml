@@ -1,0 +1,24 @@
+---
+# sensible defaults for bootstrap_prepare role
+mgmt_user: "ansible"
+mgmt_pubkey_src: "~/.ssh/id_rsa.pub"    # optional controller local pubkey to install on all nodes
+mgmt_user_shell: "/bin/bash"
+mgmt_user_groups:
+  - sudo
+mgmt_create_home: true
+
+# baseline packages (can be overridden)
+bootstrap_packages:
+  - openssh-server
+  - sudo
+  - ca-certificates
+  - apt-transport-https
+  - gnupg
+  - curl
+
+apt_update_cache: true
+apt_cache_valid_time: 3600
+
+# defaults for controller key generation (can be set in play or inventory)
+mgmt_key_type: "rsa"
+mgmt_key_bits: 4096

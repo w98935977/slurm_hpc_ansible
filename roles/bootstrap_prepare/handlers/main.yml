@@ -1,0 +1,12 @@
+---
+- name: Restart SSH (Debian/Ubuntu)
+  ansible.builtin.service:
+    name: ssh
+    state: restarted
+  ignore_errors: true
+
+- name: Restart SSH (RHEL/CentOS)
+  ansible.builtin.service:
+    name: sshd
+    state: restarted
+  ignore_errors: true

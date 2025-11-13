@@ -1,0 +1,83 @@
+---
+# Baseline tasks to run on all nodes
+- name: Set mgmt_user_final from mgmt_user default
+  ansible.builtin.set_fact:
+    mgmt_user_final: "{{ mgmt_user | default('ansible') }}"
+
+- name: Set mgmt_user_home based on mgmt_user_final
+  ansible.builtin.set_fact:
+    mgmt_user_home: "/home/{{ mgmt_user_final }}"
+
+- name: Ensure APT cache updated
+  ansible.builtin.apt:
+    update_cache: "{{ apt_update_cache }}"
+    cache_valid_time: "{{ apt_cache_valid_time }}"
+  when: ansible_os_family == 'Debian'
+  ignore_errors: yes
+
+- name: Install baseline packages (Debian/Ubuntu)
+  ansible.builtin.apt:
+    name: "{{ bootstrap_packages }}"
+    state: present
+  when: ansible_os_family == 'Debian'
+  become: yes
+
+- name: Ensure management user exists
+  ansible.builtin.user:
+    name: "{{ mgmt_user_final }}"
+    shell: "{{ mgmt_user_shell }}"
+    create_home: "{{ mgmt_create_home }}"
+    groups: "{{ mgmt_user_groups | join(',') }}"
+    append: yes
+    state: present
+  become: yes
+
+- name: Allow passwordless sudo for management user
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ mgmt_user_final }}-nopasswd"
+    content: "{{ mgmt_user_final }} ALL=(ALL) NOPASSWD:ALL\n"
+    mode: '0440'
+    owner: root
+    group: root
+    validate: '/usr/sbin/visudo -cf %s'
+  become: yes
+
+- name: Ensure .ssh directory for management user
+  ansible.builtin.file:
+    path: "{{ mgmt_user_home }}/.ssh"
+    state: directory
+    owner: "{{ mgmt_user_final }}"
+    group: "{{ mgmt_user_final }}"
+    mode: '0700'
+  become: yes
+
+- name: (optional) Read controller public key if present (control node file)
+  vars:
+    _src: "{{ mgmt_pubkey_src | default('') }}"
+  ansible.builtin.set_fact:
+    mgmt_pubkey_content: "{{ lookup('file', _src, errors='ignore') }}"
+  when: _src | length > 0
+  tags: [local-pubkey]
+
+- name: Install provided public key into management user (optional)
+  ansible.builtin.authorized_key:
+    user: "{{ mgmt_user_final }}"
+    key: "{{ mgmt_pubkey_content }}"
+    state: present
+    manage_dir: false
+  when:
+    - mgmt_pubkey_content is defined
+    - mgmt_pubkey_content | length > 0
+  tags: [local-pubkey]
+  become: yes
+
+- name: Disable root SSH login (ensure setting present)
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin'
+    line: 'PermitRootLogin no'
+    validate: '/usr/sbin/sshd -t -f %s'
+  notify:
+    - Restart SSH (Debian/Ubuntu)
+    - Restart SSH (RHEL/CentOS)
+  become: yes

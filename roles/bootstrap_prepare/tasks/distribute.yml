@@ -1,0 +1,39 @@
+---
+# Tasks to distribute controller public key to compute nodes
+- name: Pick controller host (first of slurmctld or controller)
+  ansible.builtin.set_fact:
+    controller_host_name: >-
+      {%- if (groups['slurmctld'] is defined and groups['slurmctld']|length > 0) -%}
+        {{ groups['slurmctld'][0] }}
+      {%- elif (groups['controller'] is defined and groups['controller']|length > 0) -%}
+        {{ groups['controller'][0] }}
+      {%- else -%}
+        ''
+      {%- endif -%}
+  when: controller_host_name is not defined
+
+- name: Assert controller host present and pubkey available
+  ansible.builtin.assert:
+    that:
+      - controller_host_name | length > 0
+      - hostvars[controller_host_name] is defined
+      - hostvars[controller_host_name].controller_pubkey is defined
+      - hostvars[controller_host_name].controller_pubkey.content is defined
+    fail_msg: "找不到 controller 的公鑰。請先執行 controller-key play."
+
+- name: Ensure .ssh directory exists on compute
+  ansible.builtin.file:
+    path: "{{ mgmt_user_home }}/.ssh"
+    state: directory
+    owner: "{{ mgmt_user_final }}"
+    group: "{{ mgmt_user_final }}"
+    mode: '0700'
+  become: yes
+
+- name: Append controller public key to compute authorized_keys (idempotent)
+  ansible.builtin.authorized_key:
+    user: "{{ mgmt_user_final }}"
+    key: "{{ hostvars[controller_host_name].controller_pubkey.content | b64decode }}"
+    state: present
+    manage_dir: false
+  become: yes

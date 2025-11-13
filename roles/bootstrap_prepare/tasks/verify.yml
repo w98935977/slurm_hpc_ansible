@@ -1,0 +1,16 @@
+---
+# On controller: verify passwordless SSH to each compute
+- name: Try SSH from controller to each compute (BatchMode)
+  become: yes
+  become_user: "{{ mgmt_user_final }}"
+  ansible.builtin.shell: >
+    ssh -o BatchMode=yes -o ConnectTimeout=3
+    {{ mgmt_user_final }}@{{ hostvars[item].ansible_host | default(item) }} hostname
+  register: ssh_result
+  changed_when: false
+  failed_when: false
+  loop: "{{ groups['compute'] | default([]) }}"
+
+- name: Show SSH results
+  ansible.builtin.debug:
+    var: ssh_result.results

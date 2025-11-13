@@ -1,0 +1,17 @@
+---
+# On controller: prime known_hosts for all compute nodes
+- name: Build keyscan target list (prefer ansible_host/ip)
+  ansible.builtin.set_fact:
+    keyscan_targets: "{{ keyscan_targets | default([]) + [ (hostvars[item].ansible_host | default(item)) ] }}"
+  loop: "{{ groups['compute'] | default([]) }}"
+
+- name: Add compute nodes to known_hosts (scan by IP/ansible_host)
+  become: yes
+  become_user: "{{ mgmt_user_final }}"
+  ansible.builtin.known_hosts:
+    path: "{{ mgmt_user_home }}/.ssh/known_hosts"
+    name: "{{ item }}"
+    key: "{{ lookup('pipe', 'ssh-keyscan -T 3 -H -t ed25519,rsa ' ~ item) }}"
+    state: present
+  loop: "{{ keyscan_targets | default([]) }}"
+  when: (keyscan_targets | default([])) | length > 0
