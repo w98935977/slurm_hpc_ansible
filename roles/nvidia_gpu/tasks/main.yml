@@ -1,0 +1,378 @@
+---
+# 0) Detect NVIDIA GPUs
+- name: Detect NVIDIA GPU via lspci
+  ansible.builtin.shell: |
+    set -o pipefail
+    lspci -nnk | egrep -i 'vga|3d|display' | grep -i nvidia
+  args:
+    executable: /bin/bash
+  register: nvidia_lspci
+  changed_when: false
+  failed_when: false
+
+- name: Skip hosts without NVIDIA GPU
+  ansible.builtin.debug:
+    msg: "No NVIDIA GPU detected on {{ inventory_hostname }}, skipping driver install."
+  when: nvidia_lspci.rc != 0
+
+# 1) Prepare kernel environment (headers / Secure Boot info / blacklist nouveau)
+- name: Install matching kernel headers
+  ansible.builtin.apt:
+    name: "linux-headers-{{ ansible_kernel }}"
+    state: present
+    update_cache: yes
+  register: headers_task
+  when: nvidia_lspci.rc == 0
+
+- name: Check Secure Boot state
+  ansible.builtin.shell: mokutil --sb-state | awk '{print tolower($2)}'
+  args:
+    executable: /bin/bash
+  register: sb_state
+  changed_when: false
+  failed_when: false
+  when: nvidia_lspci.rc == 0
+
+- name: Warn when Secure Boot is enabled (FYI)
+  ansible.builtin.debug:
+    msg: >
+      Secure Boot = ENABLED。一般 -open 驅動可直接載入（已簽章）；
+      若你改走 DKMS 閉源驅動，需 MOK enrollment 才能載入。
+  when:
+    - nvidia_lspci.rc == 0
+    - sb_state.stdout == 'enabled'
+
+- name: Blacklist nouveau
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/blacklist-nouveau.conf
+    mode: '0644'
+    content: |
+      blacklist nouveau
+      options nouveau modeset=0
+  register: blacklist_task
+  when: nvidia_lspci.rc == 0
+
+- name: Update initramfs after nouveau blacklist
+  ansible.builtin.command: update-initramfs -u
+  register: initramfs_task
+  changed_when: true
+  when: nvidia_lspci.rc == 0
+
+# 2) Inspect current driver flavor
+- name: Install ubuntu-drivers helper
+  ansible.builtin.apt:
+    name: ubuntu-drivers-common
+    state: present
+    update_cache: yes
+  when: nvidia_lspci.rc == 0
+
+- name: Query recommended driver package
+  ansible.builtin.shell: |
+    set -o pipefail
+    ubuntu-drivers list | awk '/nvidia-driver-/{if ($0 ~ /recommended/) {print $1; exit}}'
+  args:
+    executable: /bin/bash
+  register: nvidia_reco
+  changed_when: false
+  failed_when: false
+  when: nvidia_lspci.rc == 0
+
+- name: Detect already installed driver meta(s)
+  ansible.builtin.shell: |
+    set -o pipefail
+    dpkg-query -W -f='${Package}\n' 'nvidia-driver-*' 2>/dev/null | sort -u
+  args:
+    executable: /bin/bash
+  register: installed_metas
+  changed_when: false
+  failed_when: false
+  when: nvidia_lspci.rc == 0
+
+- name: Initialize flavor flag
+  ansible.builtin.set_fact:
+    want_open: false
+  when: nvidia_lspci.rc == 0
+
+- name: Decide desired driver meta package
+  ansible.builtin.set_fact:
+    nvidia_driver_pkg: >-
+      {%- set installed = installed_metas.stdout_lines | default([]) -%}
+      {%- if installed | select('match','^nvidia-driver-[0-9]+-open$') | list | length > 0 -%}
+        {{ (installed | select('match','^nvidia-driver-[0-9]+-open$') | list)[0] }}
+      {%- elif installed | select('match','^nvidia-driver-[0-9]+$') | list | length > 0 -%}
+        {{ (installed | select('match','^nvidia-driver-[0-9]+$') | list)[0] }}
+      {%- elif (nvidia_reco.stdout | trim | length) > 0 -%}
+        {{ nvidia_reco.stdout | trim }}
+      {%- else -%}
+        {{ nvidia_fallback_driver }}
+      {%- endif -%}
+    want_open: "{{ ( (installed_metas.stdout | default('')) is search('-open') ) or ( (nvidia_reco.stdout | default('')) is search('-open') ) }}"
+  when: nvidia_lspci.rc == 0
+
+# 3) Install driver meta + utils with remediation
+- name: Compute meta without -open suffix
+  ansible.builtin.set_fact:
+    meta_sans_open: "{{ nvidia_driver_pkg | regex_replace('-open$','') }}"
+  when: nvidia_lspci.rc == 0
+
+- name: Parse driver major from meta
+  ansible.builtin.set_fact:
+    nvidia_driver_major: "{{ (meta_sans_open.split('-') | last) }}"
+  when: nvidia_lspci.rc == 0
+
+- name: Assert parsed driver major looks sane
+  ansible.builtin.assert:
+    that:
+      - "nvidia_driver_major is match('^[0-9]+$')"
+    fail_msg: "Could not parse driver major from '{{ nvidia_driver_pkg }}'"
+  when: nvidia_lspci.rc == 0
+
+- name: Build utils package name from major
+  ansible.builtin.set_fact:
+    nvidia_utils_pkg: "nvidia-utils-{{ nvidia_driver_major }}"
+  when: nvidia_lspci.rc == 0
+
+- block:
+    - name: Install chosen NVIDIA driver meta
+      ansible.builtin.apt:
+        name: "{{ nvidia_driver_pkg }}"
+        state: present
+        update_cache: yes
+      register: install_driver
+  rescue:
+    - name: apt --fix-broken install (driver meta)
+      ansible.builtin.command: "apt-get -y {{ _dpkg_opts }} -f install"
+      register: _fix1
+      changed_when: >-
+        'packages will be removed' in _fix1.stdout
+        or 'packages will be installed' in _fix1.stdout
+        or _fix1.rc == 0
+      failed_when: false
+    - name: Retry install chosen NVIDIA driver meta
+      ansible.builtin.apt:
+        name: "{{ nvidia_driver_pkg }}"
+        state: present
+        update_cache: yes
+      register: install_driver_retry
+  when: nvidia_lspci.rc == 0
+
+- block:
+    - name: Install matching nvidia-utils (NVML)
+      ansible.builtin.apt:
+        name: "{{ nvidia_utils_pkg }}"
+        state: present
+        update_cache: yes
+      register: install_utils
+  rescue:
+    - name: apt --fix-broken install (utils)
+      ansible.builtin.command: "apt-get -y {{ _dpkg_opts }} -f install"
+      register: _fix2
+      changed_when: >-
+        'packages will be removed' in _fix2.stdout
+        or 'packages will be installed' in _fix2.stdout
+        or _fix2.rc == 0
+      failed_when: false
+    - name: Retry install matching nvidia-utils (NVML)
+      ansible.builtin.apt:
+        name: "{{ nvidia_utils_pkg }}"
+        state: present
+        update_cache: yes
+      register: install_utils_retry
+  when: nvidia_lspci.rc == 0
+
+- name: Ensure nvidia-modprobe present
+  ansible.builtin.apt:
+    name: nvidia-modprobe
+    state: present
+  register: modprobe_pkg
+  when: nvidia_lspci.rc == 0
+  failed_when: false
+
+# 4) Decide if reboot required
+- name: Decide if reboot is needed
+  ansible.builtin.set_fact:
+    need_reboot: >-
+      {{
+        (headers_task is defined and headers_task.changed) or
+        (blacklist_task is defined and blacklist_task.changed) or
+        (initramfs_task is defined and initramfs_task.changed) or
+        (install_driver is defined and install_driver.changed) or
+        (install_driver_retry is defined and install_driver_retry.changed) or
+        (install_utils is defined and install_utils.changed) or
+        (install_utils_retry is defined and install_utils_retry.changed) or
+        (modprobe_pkg is defined and modprobe_pkg.changed)
+      }}
+  when: nvidia_lspci.rc == 0
+
+- name: Reboot to load NVIDIA kernel modules
+  ansible.builtin.reboot:
+    msg: "Rebooting to load NVIDIA kernel modules"
+    reboot_timeout: 1200
+  when:
+    - nvidia_lspci.rc == 0
+    - need_reboot | default(false)
+
+# 5) Validate NVML / auto-switch to -open flavor if needed
+- name: Try to load nvidia modules
+  ansible.builtin.shell: |
+    set -o pipefail
+    modprobe -r nouveau 2>/dev/null || true
+    modprobe nvidia || exit 1
+    modprobe nvidia_uvm || true
+    lsmod | egrep '^(nvidia|nvidia_uvm)\b' || true
+  args:
+    executable: /bin/bash
+  register: modstatus
+  changed_when: false
+  failed_when: false
+  when: nvidia_lspci.rc == 0
+
+- name: Check device nodes and NVML presence
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "== devices =="; ls -l /dev/nvidia* 2>/dev/null || true
+    echo "== nvml =="; ldconfig -p | grep -i libnvidia-ml.so || true
+  args:
+    executable: /bin/bash
+  register: dev_nvml
+  changed_when: false
+  when: nvidia_lspci.rc == 0
+
+- name: Init need_open_hint default (avoid undefined)
+  ansible.builtin.set_fact:
+    need_open_hint: { stdout: "" }
+  when: nvidia_lspci.rc == 0
+
+- name: Verify GPU is visible
+  ansible.builtin.shell: |
+    set -o pipefail
+    nvidia-smi -L | egrep -c '^GPU [0-9]+:' || echo 0
+  args:
+    executable: /bin/bash
+  register: nvsmi_count
+  changed_when: false
+  failed_when: false
+  when: nvidia_lspci.rc == 0
+
+- name: Check dmesg hint for open kernel modules
+  ansible.builtin.shell: |
+    set -o pipefail
+    journalctl -k -b | grep -F "requires use of the NVIDIA open kernel modules" | tail -n 1 || true
+  args:
+    executable: /bin/bash
+  register: need_open_hint
+  changed_when: false
+  failed_when: false
+  when:
+    - nvidia_lspci.rc == 0
+    - (nvsmi_count.stdout | default('0') | int) < (min_gpu_visible | int)
+
+- block:
+    - name: Purge DKMS streams that may conflict (best effort)
+      ansible.builtin.apt:
+        name: "{{ dkms_streams_to_purge }}"
+        state: absent
+        purge: yes
+      failed_when: false
+
+    - name: Install open kernel driver stream (+common)
+      ansible.builtin.apt:
+        name:
+          - "{{ nvidia_open_driver_pkg }}"
+          - "{{ nvidia_open_common_pkg }}"
+        state: present
+        update_cache: yes
+
+    - name: Install matching NVIDIA firmware for open modules (best effort)
+      ansible.builtin.apt:
+        name: "{{ nvidia_open_fw_pkgs }}"
+        state: present
+      failed_when: false
+
+    - name: Reboot after switching to open kernel driver
+      ansible.builtin.reboot:
+        msg: "Reboot to load NVIDIA open kernel modules + GSP firmware"
+        reboot_timeout: 1200
+
+    - name: Re-verify GPU is visible after switching to -open
+      ansible.builtin.shell: |
+        set -o pipefail
+        nvidia-smi -L | egrep -c '^GPU [0-9]+:' || echo 0
+      args:
+        executable: /bin/bash
+      register: nvsmi_count2
+      changed_when: false
+
+    - name: Assert GPU visible (open kernel modules path)
+      ansible.builtin.assert:
+        that:
+          - (nvsmi_count2.stdout | int) >= (min_gpu_visible | int)
+        fail_msg: |
+          已切換到 {{ nvidia_open_driver_pkg }} 但仍看不到 GPU。
+          請回傳：
+          journalctl -k -b | egrep -i 'nvrm|gsp|firmware|rm|nvidia' | tail -n 200
+  when:
+    - nvidia_lspci.rc == 0
+    - (nvsmi_count.stdout | default('0') | int) < (min_gpu_visible | int)
+    - (need_open_hint.stdout | default('') | length) > 0
+
+- name: Assert GPU visible (no switch needed)
+  ansible.builtin.assert:
+    that:
+      - (nvsmi_count.stdout | int) >= (min_gpu_visible | int)
+  when:
+    - nvidia_lspci.rc == 0
+    - (need_open_hint.stdout | default('') | length) == 0
+
+# 6) Optionally add users to the video group
+- name: Ensure "video" group exists
+  ansible.builtin.group:
+    name: video
+    state: present
+  when: nvidia_lspci.rc == 0
+
+- name: Get passwd entries for candidate users
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ item }}"
+    fail_key: false
+  loop: "{{ video_group_users }}"
+  register: _users
+  when: nvidia_lspci.rc == 0
+
+- name: Add existing users to video group
+  ansible.builtin.user:
+    name: "{{ item.item }}"
+    groups: video
+    append: yes
+  loop: "{{ _users.results | default([]) }}"
+  when:
+    - nvidia_lspci.rc == 0
+    - item.found | default(false)
+
+# 7) Restart slurmd when present
+- name: Check if slurmd service is present
+  ansible.builtin.shell: |
+    set -o pipefail
+    systemctl list-unit-files --type=service | awk '{print $1}' | grep -qx slurmd.service
+  args:
+    executable: /bin/bash
+  register: slurmd_present
+  changed_when: false
+  failed_when: false
+
+- name: Debug note when slurmd is not installed yet
+  ansible.builtin.debug:
+    msg: "slurmd not found on {{ inventory_hostname }} (this is fine before setup_cluster.yml). Skipping restart."
+  when:
+    - nvidia_lspci.rc == 0
+    - slurmd_present.rc != 0
+
+- name: Restart slurmd (compute nodes, only if installed)
+  ansible.builtin.service:
+    name: slurmd
+    state: restarted
+    enabled: yes
+  when:
+    - nvidia_lspci.rc == 0
+    - slurmd_present.rc == 0

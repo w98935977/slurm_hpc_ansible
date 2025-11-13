@@ -1,0 +1,26 @@
+---
+# Default NVIDIA driver selection and fallbacks
+nvidia_fallback_driver: "nvidia-driver-580"
+
+# Open kernel module packages (Ubuntu 24.04+)
+nvidia_open_driver_pkg: "nvidia-driver-580-open"
+nvidia_open_common_pkg: "nvidia-kernel-common-580"
+nvidia_open_fw_pkgs:
+  - "linux-firmware-nvidia-580"
+  - "nvidia-firmware-580-580.95.05"
+
+# Remove these DKMS streams when switching driver flavors
+dkms_streams_to_purge:
+  - nvidia-dkms-525
+  - nvidia-dkms-535
+  - nvidia-dkms-570
+  - nvidia-dkms-570-server
+  - nvidia-dkms-580
+  - nvidia-dkms-580-server
+
+# Validation thresholds and group membership
+min_gpu_visible: 1
+video_group_users: ["ansible"]
+
+# Common dpkg options used by remediation tasks
+_dpkg_opts: '-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold'
