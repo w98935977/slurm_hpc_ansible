@@ -1,6 +1,7 @@
+[# Canonical inventory with controller/compute hosts and IPs]
 [controller]
-slurmctld ansible_host=10.x.x.x slurm_role=controller
+slurmctld ansible_host=10.0.0.10
 
 [compute]
-slurm ansible_host=10.x.x.x slurm_role=compute
-allenssd ansible_host=10.x.x.x slurm_role=compute
+slurm ansible_host=10.0.0.11
+allenssd ansible_host=10.0.0.12

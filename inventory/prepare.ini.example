@@ -1,10 +1,11 @@
 [controller]
-slurmctld ansible_host=10.x.x.x ansible_user=user1
+slurmctld ansible_user=ubuntu     # Override with the OS default user
 
 [compute]
-slurm ansible_host=10.x.x.x ansible_user=user2
-allenssd ansible_host=10.x.x.x ansible_user=user3
+slurm ansible_user=debian
+allenssd ansible_user=centos
 
 [all:vars]
+ansible_user=tommy                # Fallback if a host entry above stays commented
 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 ansible_become=yes
