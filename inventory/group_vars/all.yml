@@ -1,7 +1,6 @@
 # 唯一真相：管理帳號
-mgmt_user: pacers
+mgmt_user: ansible
 
-# 讓所有連線預設用 mgmt_user
 ansible_user: "{{ mgmt_user }}"
 ansible_become: true
 

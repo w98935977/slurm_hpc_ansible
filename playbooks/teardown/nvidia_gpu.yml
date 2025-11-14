@@ -1,0 +1,71 @@
+---
+- name: Remove NVIDIA GPU stack on compute nodes
+  hosts: compute
+  become: yes
+  gather_facts: no
+  vars:
+    reboot_after_gpu_teardown: "{{ (reboot_after | default(false)) | bool }}"
+
+  tasks:
+    - name: Stop NVIDIA persistence daemon if present
+      ansible.builtin.service:
+        name: nvidia-persistenced
+        state: stopped
+        enabled: no
+      failed_when: false
+
+    - name: List installed NVIDIA-related packages
+      ansible.builtin.shell: |
+        set -o pipefail
+        dpkg-query -W -f='${Package}\n' \
+          'nvidia*' 'libnvidia*' 'linux-modules-nvidia*' 'linux-objects-nvidia*' \
+          'linux-firmware-nvidia*' 'nvidia-open*' 'cuda*' 2>/dev/null | sort -u
+      args:
+        executable: /bin/bash
+      register: nvidia_pkg_query
+      changed_when: false
+      failed_when: false
+
+    - name: Purge NVIDIA packages (apt)
+      ansible.builtin.apt:
+        name: "{{ nvidia_pkg_query.stdout_lines }}"
+        state: absent
+        purge: yes
+        autoremove: yes
+      register: nvidia_pkg_purge
+      when: (nvidia_pkg_query.stdout_lines | length) > 0
+
+    - name: Remove NVIDIA firmware directories (best effort)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /lib/firmware/nvidia
+        - /usr/lib/firmware/nvidia
+      failed_when: false
+
+    - name: Remove nouveau blacklist drop-in if present
+      ansible.builtin.file:
+        path: /etc/modprobe.d/blacklist-nouveau.conf
+        state: absent
+      register: rm_nouveau_blacklist
+      failed_when: false
+
+    - name: Update initramfs after removing blacklist
+      ansible.builtin.command: update-initramfs -u
+      when: rm_nouveau_blacklist is changed
+
+    - name: Decide if reboot required
+      ansible.builtin.set_fact:
+        need_gpu_reboot: >-
+          {{
+            reboot_after_gpu_teardown or
+            (nvidia_pkg_purge is defined and nvidia_pkg_purge.changed) or
+            (rm_nouveau_blacklist is defined and rm_nouveau_blacklist.changed)
+          }}
+
+    - name: Reboot node to finalize NVIDIA teardown
+      ansible.builtin.reboot:
+        reboot_timeout: 1200
+        msg: "Rebooting after NVIDIA teardown"
+      when: need_gpu_reboot | default(false)
