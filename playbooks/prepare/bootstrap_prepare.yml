@@ -10,7 +10,7 @@
 
 # Play 2: create/read controller management user's SSH key
 - name: Ensure controller management user has SSH key
-  hosts: slurmctld
+  hosts: controller
   become: yes
   gather_facts: no
   vars:
@@ -35,7 +35,7 @@
 
 # Play 4: prime known_hosts on controller
 - name: Prime known_hosts on controller for all compute nodes
-  hosts: slurmctld
+  hosts: controller
   become: yes
   gather_facts: no
   tasks:
@@ -46,7 +46,7 @@
 
 # Play 5: verify controller->compute passwordless SSH
 - name: Verify controller->compute passwordless SSH
-  hosts: slurmctld
+  hosts: controller
   become: yes
   gather_facts: no
   tasks:

@@ -1,0 +1,40 @@
+---
+- name: Install login node packages
+  ansible.builtin.apt:
+    name: "{{ login_node_packages }}"
+    state: present
+    update_cache: yes
+
+- name: Ensure MOTD directory exists
+  ansible.builtin.file:
+    path: /etc/motd.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ensure MOTD indicates login role
+  ansible.builtin.copy:
+    dest: /etc/motd.d/00-slurm-login
+    content: |
+      This node provides login, accounting (slurmdbd), and NFS services for the Slurm cluster.
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Ensure /etc/slurm exists on login node
+  ansible.builtin.file:
+    path: /etc/slurm
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# Deploy the same slurm.conf used by controller/compute so client tools can reach slurmctld
+- name: Deploy slurm.conf to login node
+  ansible.builtin.template:
+    src: "{{ role_path }}/../slurm/templates/slurm.conf.j2"
+    dest: /etc/slurm/slurm.conf
+    owner: root
+    group: root
+    mode: '0644'

@@ -1,0 +1,47 @@
+---
+- name: Install NFS server packages
+  ansible.builtin.apt:
+    name: "{{ nfs_server_packages }}"
+    state: present
+    update_cache: yes
+
+- name: Ensure slurm service account exists (for export ownership)
+  ansible.builtin.user:
+    name: slurm
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Ensure export directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop: "{{ nfs_exports }}"
+  when: (nfs_exports | length) > 0
+
+- name: Ensure exports.d directory exists
+  ansible.builtin.file:
+    path: "{{ nfs_exports_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure exports
+  ansible.builtin.template:
+    src: exports.j2
+    dest: "{{ nfs_exports_file }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: (nfs_exports | length) > 0
+  notify: reload nfs exports
+
+- name: Ensure NFS server is running
+  ansible.builtin.service:
+    name: nfs-kernel-server
+    state: started
+    enabled: yes

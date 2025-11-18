@@ -13,3 +13,20 @@ mgmt_pubkey_src: "~/.ssh/id_rsa.pub"
 # （可選）controller 內部用金鑰型態
 mgmt_key_type: rsa
 mgmt_key_bits: 4096
+
+# 共享儲存（NFS）預設
+nfs_home_export: /export/home
+nfs_slurm_export: /export/slurm
+nfs_mount_opts: "rw,sync,_netdev"
+nfs_server_host: "{{ hostvars[groups['infra'][0]].ansible_host | default(groups['infra'][0]) if (groups['infra'] | default([])) | length > 0 else '' }}"
+
+# Slurm accounting (slurmdbd)
+slurm_user_uid: 64030
+slurm_user_gid: 64030
+slurmdbd_db_user: slurm
+# NOTE: use a simple password here to avoid chars that Slurm might misinterpret; vault in production
+slurmdbd_db_password: "slurmdbdpass"   # TODO: Vault this in production
+slurmdbd_host: "{{ nfs_server_host }}"
+slurmdbd_accounting_user: "{{ slurmdbd_db_user | default('') }}"
+# Leave empty when using auth/munge with slurmdbd; set only if you intentionally use a password
+slurmdbd_accounting_pass: ""

@@ -1,0 +1,5 @@
+---
+login_node_packages:
+  - slurm-client
+  - munge
+  - nfs-common

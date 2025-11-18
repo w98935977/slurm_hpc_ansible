@@ -1,0 +1,18 @@
+#
+# Managed by Ansible (slurmdbd role)
+#
+AuthType=auth/munge
+DbdPort={{ slurmdbd_dbd_port | default(6819) }}
+DbdHost={{ inventory_hostname }}
+SlurmUser=slurm
+StorageType=accounting_storage/mysql
+StorageHost=localhost
+StoragePass={{ slurmdbd_db_password }}
+StorageUser={{ slurmdbd_db_user }}
+StorageLoc={{ slurmdbd_db_name }}
+LogFile={{ slurmdbd_log_file }}
+PidFile=/run/slurm/slurmdbd.pid
+MessageTimeout=60
+DebugLevel=info
+ArchiveJobs=yes
+ArchiveDir=/var/log/slurm/archive

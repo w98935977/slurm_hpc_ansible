@@ -1,0 +1,5 @@
+---
+nfs_server_packages:
+  - nfs-kernel-server
+nfs_exports: []
+nfs_exports_file: /etc/exports.d/infra.exports

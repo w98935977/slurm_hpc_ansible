@@ -1,4 +1,5 @@
-slurm_role: controller
+---
+slurm_role: compute
 nfs_client_mounts:
   - src: "{{ nfs_server_host }}:{{ nfs_home_export }}"
     path: /home

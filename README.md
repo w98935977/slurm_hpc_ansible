@@ -11,10 +11,11 @@ This repository contains the end-to-end automation used to bootstrap, configure,
 
 ## Inventories and Variables
 
-- `inventory/production.ini` – canonical list of controller and compute nodes plus their IPs.
+- `inventory/production.ini` – canonical list of controller, compute, and infra nodes plus their IPs. Infra nodes host shared services (login shell, NFS, accounting DB).
 - `inventory/prepare.ini` – optional overlay that only sets per-host `ansible_user` / SSH options for the pre-bootstrap phase. Use it when the target machines still run with OS-default accounts (e.g., `ubuntu`, `debian`, etc.).
 - `inventory/group_vars/all.yml` – shared defaults such as `mgmt_user`, SSH key path, etc.
-- `inventory/group_vars/controller.yml` / `compute.yml` – role hints (e.g., `slurm_role`).
+- `inventory/group_vars/controller.yml` / `compute.yml` – role hints (e.g., `slurm_role`) plus NFS mount definitions pulled from the infra node exports.
+- `inventory/group_vars/infra.yml` – infra-specific settings (NFS exports, `slurmdbd` credentials, login node packages). Override secrets such as `slurmdbd_db_password` via Ansible Vault before running in production.
 
 When running playbooks that require the temporary overlay (bootstrap/teardown), pass both inventories **in that order** so `prepare.ini` overrides per-host variables from `production.ini`:
 
@@ -46,16 +47,20 @@ The management account (`mgmt_user`) that gets created by the bootstrap flow liv
    ```bash
    ansible-playbook -i inventory/production.ini playbooks/prepare/post_bootstrap_verify.yml
    ```
-3. **Configure Slurm cluster** (MUNGE distribution, Slurm config, service restarts, controller validation):
+3. **Provision infra services** (login node, NFS exports, Slurm accounting DB):
+   ```bash
+   ansible-playbook -i inventory/production.ini playbooks/infra/setup_infra.yml
+   ```
+4. **Configure Slurm cluster** (MUNGE distribution, Slurm config, service restarts, controller validation):
    ```bash
    ansible-playbook -i inventory/production.ini playbooks/cluster/setup_cluster.yml
    ```
-4. **(Optional) Enable NVIDIA GPUs** on compute nodes (after Slurm is installed so `scontrol` exists on the controller):
+5. **(Optional) Enable NVIDIA GPUs** on compute nodes (after Slurm is installed so `scontrol` exists on the controller):
    ```bash
    ansible-playbook -i inventory/production.ini playbooks/cluster/enable_nvidia_gpu.yml
    ```
    Hosts without NVIDIA hardware are skipped automatically.
-5. **Teardown management user** (only when you want to remove the bootstrap user):
+6. **Teardown management user** (only when you want to remove the bootstrap user):
    ```bash
    ansible-playbook -i inventory/production.ini -i inventory/prepare.ini playbooks/teardown/bootstrap_user.yml
    ```
@@ -85,5 +90,6 @@ All teardown entrypoints now live under `playbooks/teardown`:
 - If you hit `Permission denied` errors related to Ansible temp dirs (typical in sandboxed environments), set `ANSIBLE_LOCAL_TEMP=$PWD/.ansible/tmp` before running the playbooks.
 - GPU scheduling currently only supports NVIDIA cards (uses `nvidia-smi` and `/dev/nvidia*`). AMD/other GPUs will just be treated as CPU-only nodes unless additional roles/templates are added.
 - Always update `inventory/production.ini` when nodes or IPs change; `prepare.ini` should only override per-host SSH usernames for the bootstrap stage.
+- Configure the infra node before running cluster playbooks so controllers/compute nodes can mount the exported paths (`nfs_client` role reads the definitions from `inventory/group_vars/infra.yml`). Remember to rotate the `slurmdbd` password via Ansible Vault for real deployments.
 
 Feel free to fork/extend these playbooks for more complex clusters—just keep the role-oriented structure intact so new functionality is easy to reuse.***

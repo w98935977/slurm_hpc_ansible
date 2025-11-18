@@ -1,0 +1,10 @@
+---
+- name: Configure shared services on infra nodes
+  hosts: infra
+  become: yes
+  gather_facts: yes
+  roles:
+    - nfs_server
+    - munge
+    - slurmdbd
+    - login_node

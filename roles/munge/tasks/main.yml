@@ -48,12 +48,19 @@
     - { path: /run/munge,     mode: '0755' }
   become: true
 
-# 只在 controller[0] 產生 key（若不存在）
-- name: Generate munge.key on key source host (controller[0]) if missing
+# 只在 controller[0] 產生 key；若 inventory 沒有 controller，就退回當前 play 的第一台
+- name: Select munge key source host
+  ansible.builtin.set_fact:
+    munge_key_source: "{{ (groups['controller'] | default([]) | first) | default(ansible_play_hosts[0]) }}"
+  run_once: true
+  delegate_facts: true
+
+- name: Ensure munge.key exists on key source host
   ansible.builtin.command: /usr/sbin/mungekey --verbose --force -k /etc/munge/munge.key
   args:
     creates: /etc/munge/munge.key
-  when: inventory_hostname == groups['controller'][0]
+  delegate_to: "{{ munge_key_source }}"
+  run_once: true
   become: true
 
 - name: Fix key ownership and perms on key source host
@@ -62,15 +69,16 @@
     owner: munge
     group: munge
     mode: '0400'
-  when: inventory_hostname == groups['controller'][0]
+  delegate_to: "{{ munge_key_source }}"
+  run_once: true
   become: true
 
-# 從 controller[0] 讀 key 到「控制端記憶體」
+# 從 key source 讀 key 到「控制端記憶體」
 - name: Slurp munge.key from key source host (run once)
   ansible.builtin.slurp:
     src: /etc/munge/munge.key
   register: _munge_key_blob
-  delegate_to: "{{ groups['controller'][0] }}"
+  delegate_to: "{{ munge_key_source }}"
   run_once: true
   no_log: true
 

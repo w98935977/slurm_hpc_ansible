@@ -1,20 +1,26 @@
 ---
 - name: Update /etc/hosts on all nodes
-  hosts: controller,compute
+  hosts: controller,compute,infra
   become: yes
   gather_facts: no
   roles:
     - role: cluster_hosts
 
+- name: Mount shared storage on controllers and compute nodes
+  hosts: controller,compute
+  become: yes
+  roles:
+    - role: nfs_client
+
 - name: Setup all nodes (munge + slurm)
-  hosts: all
+  hosts: controller,compute
   become: yes
   roles:
     - munge
     - slurm
 
 - name: Restart munge on all nodes and validate
-  hosts: all
+  hosts: controller,compute
   become: yes
   roles:
     - role: munge_restart

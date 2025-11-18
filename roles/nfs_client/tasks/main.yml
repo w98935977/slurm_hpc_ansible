@@ -1,0 +1,31 @@
+---
+- name: Install NFS client packages
+  ansible.builtin.apt:
+    name: "{{ nfs_client_packages }}"
+    state: present
+    update_cache: yes
+  when: (nfs_client_mounts | length) > 0
+
+- name: Ensure NFS mount points exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: "{{ nfs_client_mounts }}"
+  when:
+    - (nfs_client_mounts | length) > 0
+    - item.path is defined
+
+- name: Mount NFS shares
+  ansible.builtin.mount:
+    path: "{{ item.path }}"
+    src: "{{ item.src }}"
+    fstype: "{{ item.fstype | default(nfs_client_fstype) }}"
+    opts: "{{ item.opts | default(nfs_client_default_opts) }}"
+    state: mounted
+  loop: "{{ nfs_client_mounts }}"
+  when:
+    - item.src is defined
+    - item.src | length > 0

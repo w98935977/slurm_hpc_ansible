@@ -35,6 +35,18 @@ JobAcctGatherFrequency=30
 # ===== Configless =====
 SlurmctldParameters=enable_configless
 
+# ===== Accounting =====
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost={{ slurmdbd_host | default('localhost') }}
+AccountingStorageUser={{ slurmdbd_accounting_user | default(slurmdbd_db_user | default('slurm')) }}
+{# With auth/munge and slurmdbd, a password is not required; only render when explicitly set #}
+{% if slurmdbd_accounting_pass is defined and (slurmdbd_accounting_pass | string | trim | length) > 0 %}
+AccountingStoragePass={{ slurmdbd_accounting_pass }}
+{% endif %}
+
+# Log to syslog for visibility if no files configured elsewhere
+JobCompType=jobcomp/none
+
 # ===== GPU GRES =====
 GresTypes=gpu
 

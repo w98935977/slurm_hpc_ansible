@@ -8,6 +8,15 @@
   ansible.builtin.set_fact:
     mgmt_user_home: "/home/{{ mgmt_user_final }}"
 
+- name: Ensure shared Ansible remote_tmp dir exists
+  ansible.builtin.file:
+    path: /tmp/.ansible
+    state: directory
+    owner: root
+    group: root
+    mode: '1777'
+  become: yes
+
 - name: Ensure APT cache updated
   ansible.builtin.apt:
     update_cache: "{{ apt_update_cache }}"

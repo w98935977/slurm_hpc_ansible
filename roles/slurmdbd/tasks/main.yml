@@ -1,0 +1,131 @@
+---
+- name: Install slurmdbd and database packages
+  ansible.builtin.apt:
+    name: "{{ slurmdbd_packages }}"
+    state: present
+    update_cache: yes
+
+- name: Read current slurm uid (if exists)
+  ansible.builtin.command: "getent passwd slurm | cut -d: -f3"
+  register: slurm_uid_lookup
+  changed_when: false
+  failed_when: false
+
+- name: Determine if slurm uid change is required
+  ansible.builtin.set_fact:
+    slurm_uid_change_required: "{{ (slurm_uid_lookup.stdout | trim | default('')) != '' and (slurm_uid_lookup.stdout | trim | int) != (slurm_user_uid | int) }}"
+
+- name: Stop slurmdbd before uid change (if needed)
+  ansible.builtin.service:
+    name: "{{ slurmdbd_service_name }}"
+    state: stopped
+  failed_when: false
+
+- name: Ensure slurm group exists (consistent gid across nodes)
+  ansible.builtin.group:
+    name: slurm
+    system: yes
+    gid: "{{ slurm_user_gid | default(omit) }}"
+
+- name: Ensure slurm service account exists
+  ansible.builtin.user:
+    name: slurm
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+    uid: "{{ slurm_user_uid | default(omit) }}"
+    group: slurm
+
+- name: Ensure slurm runtime directory for pidfile
+  ansible.builtin.file:
+    path: /run/slurm
+    state: directory
+    owner: slurm
+    group: slurm
+    mode: '0755'
+
+- name: Ensure systemd override directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/slurmdbd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Ensure systemd override for slurmdbd (suppress empty env var)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/slurmdbd.service.d/override.conf
+    content: |
+      [Service]
+      Environment=SLURMDBD_OPTIONS=
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Reload systemd daemon for slurmdbd override
+  ansible.builtin.command: systemctl daemon-reload
+  changed_when: false
+
+- name: Ensure log directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: slurm
+    group: slurm
+    mode: '0755'
+  loop:
+    - /var/log/slurm
+    - /var/log/slurm/archive
+
+- name: Ensure slurmdbd log file exists with correct ownership
+  ansible.builtin.file:
+    path: "{{ slurmdbd_log_file }}"
+    state: touch
+    owner: slurm
+    group: slurm
+    mode: '0600'
+
+- name: Ensure MariaDB is running
+  ansible.builtin.service:
+    name: mariadb
+    state: started
+    enabled: yes
+
+- name: Check if Slurm accounting database exists
+  ansible.builtin.command: >
+    mysql -NBe "SHOW DATABASES LIKE '{{ slurmdbd_db_name }}';"
+  register: slurmdbd_db_check
+  changed_when: false
+  failed_when: false
+
+- name: Create Slurm accounting database
+  ansible.builtin.command: >
+    mysql -u root -e "CREATE DATABASE {{ slurmdbd_db_name }} CHARACTER SET utf8mb4"
+  when: slurmdbd_db_check.stdout | trim == ""
+
+- name: "Ensure Slurm DB user has correct password and grants (hosts: % and localhost)"
+  ansible.builtin.command: >
+    mysql -u root -e "
+    CREATE USER IF NOT EXISTS '{{ slurmdbd_db_user }}'@'%' IDENTIFIED BY '{{ slurmdbd_db_password }}';
+    CREATE USER IF NOT EXISTS '{{ slurmdbd_db_user }}'@'localhost' IDENTIFIED BY '{{ slurmdbd_db_password }}';
+    ALTER USER '{{ slurmdbd_db_user }}'@'%' IDENTIFIED BY '{{ slurmdbd_db_password }}';
+    ALTER USER '{{ slurmdbd_db_user }}'@'localhost' IDENTIFIED BY '{{ slurmdbd_db_password }}';
+    GRANT ALL PRIVILEGES ON {{ slurmdbd_db_name }}.* TO '{{ slurmdbd_db_user }}'@'%';
+    GRANT ALL PRIVILEGES ON {{ slurmdbd_db_name }}.* TO '{{ slurmdbd_db_user }}'@'localhost';
+    FLUSH PRIVILEGES;"
+  changed_when: false
+
+- name: Deploy slurmdbd.conf
+  ansible.builtin.template:
+    src: slurmdbd.conf.j2
+    dest: "{{ slurmdbd_conf_path }}"
+    owner: slurm
+    group: slurm
+    mode: '0600'
+  notify: restart slurmdbd
+
+- name: Ensure slurmdbd service started
+  ansible.builtin.service:
+    name: "{{ slurmdbd_service_name }}"
+    state: started
+    enabled: yes

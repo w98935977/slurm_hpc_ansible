@@ -42,7 +42,7 @@
         var: permitroot.stdout
 
 - name: Post-bootstrap verification (controller checks)
-  hosts: slurmctld
+  hosts: controller
   become: yes
   gather_facts: no
   vars:

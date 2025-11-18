@@ -1,3 +1,4 @@
+---
 slurm_role: controller
 nfs_client_mounts:
   - src: "{{ nfs_server_host }}:{{ nfs_home_export }}"

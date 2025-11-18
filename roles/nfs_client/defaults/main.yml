@@ -1,0 +1,6 @@
+---
+nfs_client_packages:
+  - nfs-common
+nfs_client_mounts: []
+nfs_client_fstype: nfs
+nfs_client_default_opts: "rw,sync,_netdev"

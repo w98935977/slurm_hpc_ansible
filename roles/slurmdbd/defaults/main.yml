@@ -1,0 +1,8 @@
+---
+slurmdbd_packages:
+  - slurmdbd
+  - mariadb-server
+  - python3-pymysql
+slurmdbd_conf_path: /etc/slurm/slurmdbd.conf
+slurmdbd_service_name: slurmdbd
+slurmdbd_mysql_socket: /var/run/mysqld/mysqld.sock

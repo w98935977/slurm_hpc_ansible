@@ -10,6 +10,60 @@
     update_cache: true
   become: true
 
+- name: Read current slurm uid (if exists)
+  ansible.builtin.command: "getent passwd slurm | cut -d: -f3"
+  register: slurm_uid_lookup
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Determine if slurm uid change is required
+  ansible.builtin.set_fact:
+    slurm_uid_change_required: "{{ (slurm_uid_lookup.stdout | trim | default('')) != '' and (slurm_uid_lookup.stdout | trim | int) != (slurm_user_uid | int) }}"
+
+- name: Stop slurm services before uid change (if needed)
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: stopped
+  loop:
+    - slurmctld
+    - slurmd
+  when:
+    - slurm_user_uid is defined
+    - slurm_uid_change_required | default(false)
+  become: true
+  failed_when: false
+
+- name: Ensure slurm group exists (consistent gid across nodes)
+  ansible.builtin.group:
+    name: slurm
+    system: yes
+    gid: "{{ slurm_user_gid | default(omit) }}"
+  become: true
+
+# 確保 slurm 服務帳號存在（有些套件未必自帶）；強制一致的 uid/gid 供 munge 驗證
+- name: Ensure slurm service account exists
+  ansible.builtin.user:
+    name: slurm
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+    uid: "{{ slurm_user_uid | default(omit) }}"
+    group: slurm
+  become: true
+
+- name: Ensure slurm runtime/log directories exist (ownership for services)
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /run/slurm,       owner: slurm, group: slurm, mode: '0755' }
+    - { path: /var/log/slurm,   owner: slurm, group: slurm, mode: '0755' }
+  become: true
+
 # 偵測常見的 PluginDir（Ubuntu 會是 slurm-wlm）
 - name: Stat common Slurm plugin directories
   ansible.builtin.stat:
