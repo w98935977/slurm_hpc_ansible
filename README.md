@@ -39,6 +39,11 @@ The management account (`mgmt_user`) that gets created by the bootstrap flow liv
 
 ## Typical Workflow
 
+0. **Preflight (inventory/vars/connectivity sanity check)** – run before any other playbook to catch missing vars or unreachable hosts:
+   ```bash
+   ansible-playbook -i inventory/production.ini -i inventory/prepare.ini playbooks/prepare/preflight.yml
+   ```
+   This asserts controller/compute/infra groups exist, required vars (`mgmt_user`, `nfs_server_host`, `slurmdbd_db_password`) are set, and pings every host.
 1. **Bootstrap management user** (creates `mgmt_user`, installs keys, primes controller known_hosts):
    ```bash
    ansible-playbook -i inventory/production.ini -i inventory/prepare.ini playbooks/prepare/bootstrap_prepare.yml

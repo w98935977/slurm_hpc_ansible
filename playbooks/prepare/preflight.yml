@@ -1,0 +1,8 @@
+---
+# Run this before bootstrap to ensure inventory/vars/connectivity are sane
+- name: Preflight validation (inventory + reachability)
+  hosts: all
+  gather_facts: no
+  become: no
+  roles:
+    - role: preflight

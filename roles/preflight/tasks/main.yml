@@ -1,0 +1,29 @@
+---
+# Preflight checks to catch inventory/variable issues early
+- name: Assert inventory has at least one controller, compute, and infra host
+  ansible.builtin.assert:
+    that:
+      - (groups['controller'] | default([])) | length > 0
+      - (groups['compute'] | default([])) | length > 0
+      - (groups['infra'] | default([])) | length > 0
+    fail_msg: "Inventory must define controller, compute, and infra hosts."
+  run_once: true
+  delegate_to: localhost
+
+- name: Validate critical shared variables are set
+  ansible.builtin.assert:
+    that:
+      - mgmt_user | default('') | length > 0
+      - nfs_server_host | default('') | length > 0
+      - slurmdbd_db_password is defined
+      - slurmdbd_db_password | length > 0
+    fail_msg: >-
+      Missing required variables (mgmt_user, nfs_server_host, or slurmdbd_db_password).
+      Set them in inventory/group_vars before running bootstrap/infra/cluster playbooks.
+  run_once: true
+  delegate_to: localhost
+
+- name: Check SSH reachability with ping (per host)
+  ansible.builtin.ping:
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
