@@ -3,6 +3,13 @@
   hosts: infra
   become: yes
   gather_facts: yes
+  pre_tasks:
+    - name: Assert slurmdbd_db_password is set for infra
+      ansible.builtin.assert:
+        that:
+          - slurmdbd_db_password is defined
+          - slurmdbd_db_password | length > 0
+        fail_msg: "請提供 slurmdbd_db_password（建議使用 ansible-vault -e @inventory/vault/slurmdbd.yml --ask-vault-pass）。"
   roles:
     - nfs_server
     - munge

@@ -32,6 +32,8 @@ ansible.cfg  # 若含 vault_password_file 等敏感路徑，建議忽略
 inventory/*.ini
 !inventory/prepare.ini.example
 !inventory/production.ini.example
+inventory/vault/
+inventory/group_vars/all/vault.yml
 
 # 任何你臨時產出的機密/主機特定檔
 host_vars/*/      # 建議用 vault 加密後才 commit

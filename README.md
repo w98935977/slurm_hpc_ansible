@@ -1,100 +1,112 @@
-# Slurm HPC Ansible Playbooks
+# Slurm HPC Ansible Playbooks · Bilingual Guide
 
-This repository contains the end-to-end automation used to bootstrap, configure, and maintain a small Slurm cluster (controller + compute nodes). It is optimized for Ubuntu-based nodes with NVIDIA GPUs, but most steps work on any Debian/Ubuntu derivative once the prerequisites are met.
+Automate the full Slurm lifecycle (bootstrap → infra → cluster → GPU/teardown) with a single Vault-protected workflow.  
+這份專案提供完整的 Slurm 叢集自動化流程；只要設定好 inventory / 變數 / Vault，即可用一個 `--vault-password-file` 跑完整個流程。
 
-## Prerequisites
+---
 
-- Ansible 2.15+ installed on the control machine.
-- SSH access from the control machine to every node listed in `inventory/production.ini`.
-- SSH key available locally (defaults to `~/.ssh/id_rsa`). Override via `inventory/group_vars/all.yml` if you use a different key.
-- Python + sudo available on the managed nodes (the bootstrap stage will create the management user and sudoers drop-in).
+## 1. Setup / 事前準備
 
-## Inventories and Variables
+1. **Install Ansible 2.15+ on the control node**  
+   控制端需安裝 Ansible 2.15 以上版本。
+2. **Prepare inventory files**  
+   - `inventory/production.ini`: controller / compute / infra hosts & IPs.  
+     `inventory/production.ini`：填入實際主機與 IP。  
+   - `inventory/prepare.ini`: pre-bootstrap login overrides (default user `tommy`).  
+     `inventory/prepare.ini`：bootstrap 前用來登入的帳號，如需不同帳號請在此覆寫。  
+3. **Adjust group vars as needed**  
+   - `inventory/group_vars/all/main.yml`: mgmt_user、NFS、Slurm UID/GID…  
+   - `inventory/group_vars/controller.yml` / `compute.yml`: Slurm 角色與 NFS 掛載。  
+   - `inventory/group_vars/infra.yml`: infra exports、slurmdbd 設定、login node 套件。  
+4. **Create the auto-loaded Vault** (`inventory/group_vars/all/vault.yml`)  
+   Encrypt it so Ansible can automatically load SSH/sudo/DB secrets:
+   ```yaml
+   ansible_password: "!QAZ2wsx"          # SSH 密碼
+   ansible_become_password: "!QAZ2wsx"  # sudo 密碼
+   vault_slurmdbd_db_password: "slurmdbdpass"
+   ```
+   Example creation (assuming you store the vault pass in `./inventory/vault/.ansible_vault_pass`):
+   ```bash
+   cat > /tmp/all_vault_plain.yml <<'EOF'
+   ansible_password: "!QAZ2wsx"
+   ansible_become_password: "!QAZ2wsx"
+   vault_slurmdbd_db_password: "slurmdbdpass"
+   EOF
+   ansible-vault encrypt /tmp/all_vault_plain.yml \
+     --vault-password-file ./inventory/vault/.ansible_vault_pass \
+     --output inventory/group_vars/all/vault.yml
+   ```
+   之後所有 playbook 只需附帶 `--vault-password-file ./inventory/vault/.ansible_vault_pass`（或 `--ask-vault-pass`），完全不需要再輸入 `--ask-pass --ask-become-pass`。
 
-- `inventory/production.ini` – canonical list of controller, compute, and infra nodes plus their IPs. Infra nodes host shared services (login shell, NFS, accounting DB).
-- `inventory/prepare.ini` – optional overlay that only sets per-host `ansible_user` / SSH options for the pre-bootstrap phase. Use it when the target machines still run with OS-default accounts (e.g., `ubuntu`, `debian`, etc.).
-- `inventory/group_vars/all.yml` – shared defaults such as `mgmt_user`, SSH key path, etc.
-- `inventory/group_vars/controller.yml` / `compute.yml` – role hints (e.g., `slurm_role`) plus NFS mount definitions pulled from the infra node exports.
-- `inventory/group_vars/infra.yml` – infra-specific settings (NFS exports, `slurmdbd` credentials, login node packages). Override secrets such as `slurmdbd_db_password` via Ansible Vault before running in production.
+---
 
-When running playbooks that require the temporary overlay (bootstrap/teardown), pass both inventories **in that order** so `prepare.ini` overrides per-host variables from `production.ini`:
+## 2. Execution Flow / 執行流程
 
-```bash
-ansible-playbook -i inventory/production.ini -i inventory/prepare.ini playbooks/prepare/bootstrap_prepare.yml
+> 下列指令全部使用同一個參數：  
+> `--vault-password-file ./inventory/vault/.ansible_vault_pass`
+
+1. **Bootstrap 管理帳號 / controller→compute 無密鑰登入**
+   ```bash
+   ansible-playbook -i inventory/production.ini -i inventory/prepare.ini \
+     playbooks/prepare/bootstrap_prepare.yml \
+     --vault-password-file ./inventory/vault/.ansible_vault_pass
+   ```
+2. **Post-bootstrap 驗證（sudoers / SSH / known_hosts）**
+   ```bash
+   ansible-playbook -i inventory/production.ini \
+     playbooks/prepare/post_bootstrap_verify.yml \
+     --vault-password-file ./inventory/vault/.ansible_vault_pass
+   ```
+3. **Infra：NFS exports·slurmdbd·login node**
+   ```bash
+   ansible-playbook -i inventory/production.ini \
+     playbooks/infra/setup_infra.yml \
+     --vault-password-file ./inventory/vault/.ansible_vault_pass
+   ```
+4. **Cluster：更新 hosts / NFS / MUNGE / Slurm + 跨節點驗證**
+   ```bash
+   ansible-playbook -i inventory/production.ini \
+     playbooks/cluster/setup_cluster.yml \
+     --vault-password-file ./inventory/vault/.ansible_vault_pass
+   ```
+5. **(可選) 启用 NVIDIA GPU**
+   ```bash
+   ansible-playbook -i inventory/production.ini \
+     playbooks/cluster/enable_nvidia_gpu.yml \
+     --vault-password-file ./inventory/vault/.ansible_vault_pass
+   ```
+6. **Teardown（在 `playbooks/teardown/`）**  
+   GPU / Slurm stack / bootstrap user 等拆除流程同樣只需附上 Vault 密碼檔。
+
+> 若想先檢查 inventory/變數/連線是否 OK，可在步驟 1 前執行 `playbooks/prepare/preflight.yml` 搭配同一個 vault pass。
+
+---
+
+## 3. Directory Overview / 目錄結構
+
+```
+inventory/
+├── production.ini             # 實際 controller / compute / infra 主機
+├── prepare.ini                # pre-bootstrap 登入帳號覆寫
+├── group_vars/
+│   ├── all/
+│   │   ├── main.yml           # 共用變數
+│   │   └── vault.yml          # 加密檔（ansible_password / ansible_become_password / vault_slurmdbd_db_password）
+│   ├── controller.yml
+│   ├── compute.yml
+│   └── infra.yml
+└── vault/
+    └── .ansible_vault_pass    # Vault 密碼檔（範例，可自備）
 ```
 
-`inventory/prepare.ini` is typically used just to ensure SSH connectivity before the management account exists. You **must** specify an account that already exists on each node (the OS default user, root, etc.) so Ansible can log in. The simplest approach is to redeclare the hosts there with the desired `ansible_user`, e.g.:
+---
 
-```
-[controller]
-slurmctld ansible_user=tommy
+## 4. Checklist / 檢查清單
 
-[compute]
-slurm ansible_user=tommy
-```
+1. `inventory/production.ini`、`inventory/prepare.ini` 是否填好？  
+2. `inventory/group_vars/all/main.yml` / `infra.yml` 是否符合環境（mgmt_user、NFS、Slurm UID/GID 等）？  
+3. `inventory/group_vars/all/vault.yml` 是否已加密且包含三個鍵（SSH、sudo、slurmdbd 密碼）？  
+4. 執行指令是否使用 `--vault-password-file ./inventory/vault/.ansible_vault_pass`（或 `--ask-vault-pass`）？
 
-Only when a node needs a different login should you adjust its entry. For all other playbooks, just use `inventory/production.ini`.
-
-The management account (`mgmt_user`) that gets created by the bootstrap flow lives in `inventory/group_vars/all.yml`. Modify it there when you want to switch to a different cluster-wide admin user; every playbook and role reads from that single source of truth, so you don’t need to tweak inventory files or CLI flags.
-
-## Typical Workflow
-
-0. **Preflight (inventory/vars/connectivity sanity check)** – run before any other playbook to catch missing vars or unreachable hosts:
-   ```bash
-   ansible-playbook -i inventory/production.ini -i inventory/prepare.ini playbooks/prepare/preflight.yml
-   ```
-   This asserts controller/compute/infra groups exist, required vars (`mgmt_user`, `nfs_server_host`, `slurmdbd_db_password`) are set, and pings every host.
-1. **Bootstrap management user** (creates `mgmt_user`, installs keys, primes controller known_hosts):
-   ```bash
-   ansible-playbook -i inventory/production.ini -i inventory/prepare.ini playbooks/prepare/bootstrap_prepare.yml
-   ```
-2. **Post-bootstrap verification** (sudoers, SSH, controller→compute reachability):
-   ```bash
-   ansible-playbook -i inventory/production.ini playbooks/prepare/post_bootstrap_verify.yml
-   ```
-3. **Provision infra services** (login node, NFS exports, Slurm accounting DB):
-   ```bash
-   ansible-playbook -i inventory/production.ini playbooks/infra/setup_infra.yml
-   ```
-4. **Configure Slurm cluster** (MUNGE distribution, Slurm config, service restarts, controller validation):
-   ```bash
-   ansible-playbook -i inventory/production.ini playbooks/cluster/setup_cluster.yml
-   ```
-5. **(Optional) Enable NVIDIA GPUs** on compute nodes (after Slurm is installed so `scontrol` exists on the controller):
-   ```bash
-   ansible-playbook -i inventory/production.ini playbooks/cluster/enable_nvidia_gpu.yml
-   ```
-   Hosts without NVIDIA hardware are skipped automatically.
-6. **Teardown management user** (only when you want to remove the bootstrap user):
-   ```bash
-   ansible-playbook -i inventory/production.ini -i inventory/prepare.ini playbooks/teardown/bootstrap_user.yml
-   ```
-
-## Teardown Playbooks
-
-All teardown entrypoints now live under `playbooks/teardown`:
-
-1. **GPU teardown (optional)** – purge NVIDIA drivers, remove the nouveau blacklist, and reboot if needed:
-   ```bash
-   ansible-playbook -i inventory/production.ini playbooks/teardown/nvidia_gpu.yml
-   ```
-   Use `-e reboot_after=true` if you want to force a reboot even when nothing changed.
-2. **Slurm/MUNGE stack teardown** – stop services, purge packages, delete config/state, and clean `/etc/hosts`:
-   ```bash
-   ansible-playbook -i inventory/production.ini playbooks/teardown/cluster_stack.yml
-   ```
-   Toggle `-e purge_stack=false` or `-e wipe_system_users=false` if you want to keep packages/users.
-3. **Bootstrap user teardown** – remove controller known_hosts entries plus the `mgmt_user` account:
-   ```bash
-   ansible-playbook -i inventory/production.ini -i inventory/prepare.ini playbooks/teardown/bootstrap_user.yml
-   ```
-   Run this as the pre-bootstrap account specified in `inventory/prepare.ini`, and supply its SSH / sudo password via `--ask-pass --ask-become-pass` if necessary.
-
-## Notes and Tips
-
-- If you hit `Permission denied` errors related to Ansible temp dirs (typical in sandboxed environments), set `ANSIBLE_LOCAL_TEMP=$PWD/.ansible/tmp` before running the playbooks.
-- GPU scheduling currently only supports NVIDIA cards (uses `nvidia-smi` and `/dev/nvidia*`). AMD/other GPUs will just be treated as CPU-only nodes unless additional roles/templates are added.
-- Always update `inventory/production.ini` when nodes or IPs change; `prepare.ini` should only override per-host SSH usernames for the bootstrap stage.
-- Configure the infra node before running cluster playbooks so controllers/compute nodes can mount the exported paths (`nfs_client` role reads the definitions from `inventory/group_vars/infra.yml`). Remember to rotate the `slurmdbd` password via Ansible Vault for real deployments.
-
-Feel free to fork/extend these playbooks for more complex clusters—just keep the role-oriented structure intact so new functionality is easy to reuse.***
+只要以上都 OK，就能依照第 2 節指令完成整個 Slurm 叢集部署與維護。Enjoy your cluster!  
+只要以上條件符合，照著流程執行即可順利完成部署。祝操作順利！

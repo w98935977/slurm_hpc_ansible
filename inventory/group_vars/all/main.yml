@@ -1,11 +1,15 @@
 # 唯一真相：管理帳號
 mgmt_user: ansible
 
-ansible_user: "{{ mgmt_user }}"
 ansible_become: true
 
-# 預設使用的私鑰（可換）
-ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+# 若目標帳號需要密碼登入/提權，可把密碼放在 Vault（inventory/vault/bootstrap.yml）
+ansible_password: "{{ vault_ansible_password | default(omit) }}"
+ansible_become_password: "{{ vault_ansible_become_password | default(omit) }}"
+
+# 預設改用密碼登入（Vault 提供），如要改回金鑰再覆寫
+ansible_ssh_private_key_file: ""
+ansible_ssh_common_args: "-o PreferredAuthentications=password -o PubkeyAuthentication=no -o PasswordAuthentication=yes -o KbdInteractiveAuthentication=yes -o StrictHostKeyChecking=no"
 
 # （可選）在 bootstrap 時要塞進節點的本機公鑰
 mgmt_pubkey_src: "~/.ssh/id_rsa.pub"
@@ -24,8 +28,6 @@ nfs_server_host: "{{ hostvars[groups['infra'][0]].ansible_host | default(groups[
 slurm_user_uid: 64030
 slurm_user_gid: 64030
 slurmdbd_db_user: slurm
-# NOTE: use a simple password here to avoid chars that Slurm might misinterpret; vault in production
-slurmdbd_db_password: "slurmdbdpass"   # TODO: Vault this in production
 slurmdbd_host: "{{ nfs_server_host }}"
 slurmdbd_accounting_user: "{{ slurmdbd_db_user | default('') }}"
 # Leave empty when using auth/munge with slurmdbd; set only if you intentionally use a password

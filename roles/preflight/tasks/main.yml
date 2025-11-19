@@ -15,11 +15,19 @@
     that:
       - mgmt_user | default('') | length > 0
       - nfs_server_host | default('') | length > 0
+    fail_msg: >-
+      Missing required variables (mgmt_user, nfs_server_host).
+      Set them in inventory/group_vars before running bootstrap/infra/cluster playbooks.
+  run_once: true
+  delegate_to: localhost
+
+- name: Validate slurmdbd password when requested
+  ansible.builtin.assert:
+    that:
       - slurmdbd_db_password is defined
       - slurmdbd_db_password | length > 0
-    fail_msg: >-
-      Missing required variables (mgmt_user, nfs_server_host, or slurmdbd_db_password).
-      Set them in inventory/group_vars before running bootstrap/infra/cluster playbooks.
+    fail_msg: "slurmdbd_db_password 未設定；在跑 infra/slurmdbd 前請提供 Vault 變數。"
+  when: preflight_require_slurmdbd_password | default(false) | bool
   run_once: true
   delegate_to: localhost
 
@@ -27,3 +35,4 @@
   ansible.builtin.ping:
   vars:
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
