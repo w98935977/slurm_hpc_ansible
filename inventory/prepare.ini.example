@@ -1,11 +1,9 @@
-[controller]
-slurmctld ansible_user=ubuntu     # Override with the OS default user
+# Sample prepare inventory
+# Copy to inventory/prepare.ini and adjust ansible_user / password vars if needed
 
-[compute]
-slurm ansible_user=debian
-allenssd ansible_user=centos
-
-[all:vars]
-ansible_user=tommy                # Fallback if a host entry above stays commented
-ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-ansible_become=yes
+[all]
+# Set the temporary login user before bootstrap (e.g. vendor-provided admin)
+ansible_user=ubuntu
+# Uncomment if you need to override ssh key / password for initial login
+# ansible_password=changeme
+# ansible_ssh_private_key_file=~/.ssh/id_rsa

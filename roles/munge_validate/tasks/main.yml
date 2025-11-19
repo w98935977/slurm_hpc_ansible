@@ -1,10 +1,20 @@
 ---
+- name: Ensure mgmt_user home exists on controller
+  become: yes
+  ansible.builtin.file:
+    path: "/home/{{ mgmt_user }}"
+    state: directory
+    owner: "{{ mgmt_user }}"
+    group: "{{ mgmt_user }}"
+    mode: '0750'
+
 - name: Ensure ~/.ssh exists for mgmt_user on controller
   become: yes
-  become_user: "{{ mgmt_user }}"
   ansible.builtin.file:
     path: "/home/{{ mgmt_user }}/.ssh"
     state: directory
+    owner: "{{ mgmt_user }}"
+    group: "{{ mgmt_user }}"
     mode: '0700'
 
 - name: Build keyscan target list (prefer ansible_host/ip)
