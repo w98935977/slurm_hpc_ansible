@@ -1,6 +1,11 @@
-AutoDetect=off
+{% set _mode = slurm_gres_autodetect | default('off') %}
+AutoDetect={{ _mode }}
+{% if _mode | lower == 'off' -%}
 {% set _n = (gpu_count | default(0) | int) %}
 {% set _type = (gpu_type | default('nvidia')) %}
 {% for i in range(0, _n) -%}
 Name=gpu Type={{ _type }} File=/dev/nvidia{{ i }}
 {% endfor -%}
+{% else -%}
+# 自動偵測 GPU（Slurm {{ _mode }} 模式）
+{% endif -%}

@@ -1,8 +1,7 @@
-# 使用 cgroup v2；Slurm 23.11 在 Ubuntu 24.04 走 v2 最單純
-CgroupPlugin=cgroup/v2
+# cgroup plugin（預設使用 cgroup/v2，可透過 slurm_cgroup_plugin 覆寫）
+CgroupPlugin={{ slurm_cgroup_plugin | default('cgroup/v2') }}
 
 # 先把設備限制關掉，避免 /dev/nvidia* 初期被擋
 ConstrainCores=yes
 ConstrainRAMSpace=yes
 ConstrainDevices=yes
-AllowedDevicesFile=/etc/slurm/cgroup_allowed_devices.conf

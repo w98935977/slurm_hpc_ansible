@@ -32,3 +32,6 @@ slurmdbd_host: "{{ nfs_server_host }}"
 slurmdbd_accounting_user: "{{ slurmdbd_db_user | default('') }}"
 # Leave empty when using auth/munge with slurmdbd; set only if you intentionally use a password
 slurmdbd_accounting_pass: ""
+
+# Slurm GRES AutoDetect mode
+slurm_gres_autodetect: "nvml"

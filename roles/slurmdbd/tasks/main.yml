@@ -4,6 +4,7 @@
     name: "{{ slurmdbd_packages }}"
     state: present
     update_cache: yes
+    cache_valid_time: 3600
 
 - name: Read current slurm uid (if exists)
   ansible.builtin.command: "getent passwd slurm | cut -d: -f3"

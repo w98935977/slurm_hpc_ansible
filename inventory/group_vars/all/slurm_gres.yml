@@ -1,0 +1,3 @@
+---
+# Slurm GRES AutoDetect mode
+slurm_gres_autodetect: "nvml"

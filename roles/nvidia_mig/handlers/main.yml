@@ -1,0 +1,5 @@
+---
+- name: Restart nvidia-persistenced
+  ansible.builtin.service:
+    name: "{{ nvidia_persistence_service }}"
+    state: restarted

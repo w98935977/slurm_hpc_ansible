@@ -1,0 +1,25 @@
+---
+# Slurm build defaults
+slurm_build_root: /usr/local/src/slurm
+slurm_source_version: "25.11.0"
+slurm_source_url: ""
+slurm_force_rebuild: false
+slurm_install_prefix: /usr
+slurm_install_sysconfdir: /etc/slurm
+slurm_install_libdir: /usr/lib/x86_64-linux-gnu
+slurm_plugin_dir_default: "{{ slurm_install_libdir }}/slurm"
+slurm_make_flags: "-j {{ ansible_facts['processor_vcpus'] | default(2) }}"
+slurm_configure_args: >-
+  --prefix={{ slurm_install_prefix }}
+  --sysconfdir={{ slurm_install_sysconfdir }}
+  --with-pmix
+  --with-mysql
+  --with-systemd
+  --with-cgroup=systemd
+  --libdir={{ slurm_install_libdir }}
+
+# GRES autodetect mode (nvidia requires Slurm >= 24.11)
+slurm_gres_autodetect: "nvml"
+
+# Cgroup plugin target (default to v2 when kernel headers permit)
+slurm_cgroup_plugin: "cgroup/v2"

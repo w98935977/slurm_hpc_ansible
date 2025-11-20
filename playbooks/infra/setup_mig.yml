@@ -1,0 +1,6 @@
+---
+- name: Configure NVIDIA MIG
+  hosts: compute
+  become: yes
+  roles:
+    - nvidia_mig

@@ -1,6 +1,6 @@
 ---
-# 安裝 Slurm 及基本外掛
-- name: Install slurm packages
+# 安裝 Slurm 及基本外掛（利用套件取得 systemd 服務與依賴）
+- name: Install distro Slurm base packages
   ansible.builtin.apt:
     name:
       - slurmctld
@@ -8,6 +8,150 @@
       - slurm-wlm-basic-plugins
     state: present
     update_cache: true
+    cache_valid_time: 3600
+  become: true
+
+- name: Install Slurm build/runtime dependencies (Debian)
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - git
+      - pkg-config
+      - python3
+      - munge
+      - libmunge-dev
+      - libmunge2
+      - libpam0g-dev
+      - libhwloc-dev
+      - libssl-dev
+      - libcurl4-openssl-dev
+      - libmysqlclient-dev
+      - libpmix-dev
+      - libcgroup-dev
+      - libhdf5-dev
+      - libncurses-dev
+      - libreadline-dev
+      - libevent-dev
+      - libarchive-dev
+      - libsystemd-dev
+      - libbpf-dev
+      - zlib1g-dev
+      - "linux-headers-{{ ansible_kernel }}"
+      - libnvidia-ml-dev
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == 'Debian'
+  become: true
+
+- name: Hold distro Slurm packages to prevent downgrade/overwrite
+  ansible.builtin.command: "apt-mark hold {{ item }}"
+  loop:
+    - slurmctld
+    - slurmd
+    - slurm-wlm-basic-plugins
+  failed_when: false
+  when: ansible_os_family == 'Debian'
+  become: true
+
+- name: Discover installed slurmd version
+  ansible.builtin.command: slurmd --version
+  register: slurmd_version_cmd
+  changed_when: false
+  failed_when: false
+
+- name: Compute Slurm build metadata
+  ansible.builtin.set_fact:
+    slurm_installed_version: >-
+      {{
+        (slurmd_version_cmd.stdout | default('') | regex_search('([0-9]+\\.[0-9]+\\.[0-9]+)'))
+          | default('')
+      }}
+    slurm_source_tarball: "slurm-{{ slurm_source_version }}.tar.bz2"
+    slurm_source_effective_url: >-
+      {{
+        (slurm_source_url | default('', true)) | length > 0
+          and (slurm_source_url | default('', true))
+          or ('https://download.schedmd.com/slurm/slurm-' ~ slurm_source_version ~ '.tar.bz2')
+      }}
+    slurm_source_dir: "{{ slurm_build_root }}/slurm-{{ slurm_source_version }}"
+    slurm_build_stamp: "{{ slurm_build_root }}/.slurm-built-{{ slurm_source_version }}-{{ (slurm_configure_args | trim) | hash('sha1') }}"
+    slurm_plugin_dir: "{{ slurm_plugin_dir | default(slurm_plugin_dir_default) }}"
+
+- name: Check desired cgroup plugin availability
+  ansible.builtin.stat:
+    path: "{{ slurm_plugin_dir }}/{{ 'cgroup_v2.so' if (slurm_cgroup_plugin | default('cgroup/v2')) == 'cgroup/v2' else 'cgroup_v1.so' }}"
+  register: slurm_cgroup_plugin_stat
+  changed_when: false
+
+- name: Force rebuild when desired cgroup plugin missing
+  ansible.builtin.set_fact:
+    slurm_force_rebuild: true
+  when:
+    - (slurm_cgroup_plugin | default('cgroup/v2')) == 'cgroup/v2'
+    - not (slurm_cgroup_plugin_stat.stat.exists | default(false))
+
+- name: Decide if Slurm build is required
+  ansible.builtin.set_fact:
+    slurm_build_required: >-
+      {{
+        slurm_force_rebuild | bool
+        or (slurm_installed_version | default('')) != slurm_source_version
+      }}
+
+- block:
+    - name: Ensure Slurm build root exists
+      ansible.builtin.file:
+        path: "{{ slurm_build_root }}"
+        state: directory
+        mode: '0755'
+
+    - name: Remove previous source tree when forcing rebuild
+      ansible.builtin.file:
+        path: "{{ slurm_source_dir }}"
+        state: absent
+      when: slurm_force_rebuild | bool
+
+    - name: Download Slurm source tarball
+      ansible.builtin.get_url:
+        url: "{{ slurm_source_effective_url }}"
+        dest: "{{ slurm_build_root }}/{{ slurm_source_tarball }}"
+        mode: '0644'
+        force: "{{ slurm_force_rebuild | bool }}"
+
+    - name: Extract Slurm source tree
+      ansible.builtin.unarchive:
+        src: "{{ slurm_build_root }}/{{ slurm_source_tarball }}"
+        dest: "{{ slurm_build_root }}"
+        remote_src: true
+        creates: "{{ slurm_source_dir }}"
+
+    - name: Configure Slurm source
+      ansible.builtin.command: "./configure {{ slurm_configure_args }}"
+      args:
+        chdir: "{{ slurm_source_dir }}"
+      environment:
+        CPPFLAGS: "-I/usr/src/linux-headers-{{ ansible_kernel }}/include/uapi -I/usr/src/linux-headers-{{ ansible_kernel }}/include"
+        CFLAGS: "-I/usr/src/linux-headers-{{ ansible_kernel }}/include/uapi -I/usr/src/linux-headers-{{ ansible_kernel }}/include"
+
+    - name: Build Slurm from source
+      ansible.builtin.command: "make {{ slurm_make_flags }}"
+      args:
+        chdir: "{{ slurm_source_dir }}"
+      environment:
+        CPPFLAGS: "-I/usr/src/linux-headers-{{ ansible_kernel }}/include/uapi -I/usr/src/linux-headers-{{ ansible_kernel }}/include"
+        CFLAGS: "-I/usr/src/linux-headers-{{ ansible_kernel }}/include/uapi -I/usr/src/linux-headers-{{ ansible_kernel }}/include"
+
+    - name: Install Slurm from source
+      ansible.builtin.command: make install
+      args:
+        chdir: "{{ slurm_source_dir }}"
+
+    - name: Record custom Slurm build stamp
+      ansible.builtin.file:
+        path: "{{ slurm_build_stamp }}"
+        state: touch
+  when: slurm_build_required | bool
   become: true
 
 - name: Read current slurm uid (if exists)
@@ -64,15 +208,15 @@
     - { path: /var/log/slurm,   owner: slurm, group: slurm, mode: '0755' }
   become: true
 
-# 偵測常見的 PluginDir（Ubuntu 會是 slurm-wlm）
+# 偵測常見的 PluginDir（優先使用自編譯版本）
 - name: Stat common Slurm plugin directories
   ansible.builtin.stat:
     path: "{{ item }}"
   loop:
-    - /usr/lib/x86_64-linux-gnu/slurm-wlm
     - /usr/lib/x86_64-linux-gnu/slurm
     - /usr/lib/slurm
     - /usr/lib64/slurm
+    - /usr/lib/x86_64-linux-gnu/slurm-wlm
   register: _plugdirs
 
 - name: Pick first existing plugin dir (or leave undefined)
@@ -84,7 +228,7 @@
           | map(attribute='stat.path')
           | list
           | first)
-        | default('/usr/lib/x86_64-linux-gnu/slurm-wlm')
+        | default('/usr/lib/x86_64-linux-gnu/slurm')
       }}
 
 # ── Slurm 啟動前做 MUNGE 自我測試（較穩定） ───────────────────────────────
@@ -128,7 +272,8 @@
       ansible.builtin.shell: systemctl status munge --no-pager -l || true
       register: _svc
       changed_when: false
-    - ansible.builtin.debug:
+    - name: Show munge service status
+      ansible.builtin.debug:
         var: _svc.stdout
     - name: Abort slurm preflight
       ansible.builtin.fail:
@@ -145,13 +290,28 @@
   notify: "slurm config changed"
   become: true
 
-# 計算節點偵測 GPU 張數（nvidia-smi -L）
-- name: Detect GPU count on compute (nvidia-smi -L)
-  ansible.builtin.shell: "nvidia-smi -L | wc -l"
+# 計算節點偵測 GPU 張數（優先計算 MIG 實例，若無則算實體 GPU）
+- name: Detect GPU count on compute (MIG aware)
+  ansible.builtin.shell: |
+    set -o pipefail
+    # Count MIG instances
+    mig_cnt=$(/usr/bin/nvidia-smi mig -lgi 2>/dev/null | grep 'MIG' | wc -l || echo 0)
+    # If MIG instances found, use that count
+    if [ "$mig_cnt" -gt 0 ]; then
+      echo "$mig_cnt"
+    else
+      # Otherwise count physical GPUs
+      /usr/bin/nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | wc -l || echo 0
+    fi
   args: { executable: /bin/bash }
   register: _gpu_cnt
   changed_when: false
   failed_when: false
+  when: "'compute' in group_names"
+
+- name: Debug detected GPU count
+  ansible.builtin.debug:
+    var: _gpu_cnt.stdout
   when: "'compute' in group_names"
 
 - name: Set gpu_count fact for template

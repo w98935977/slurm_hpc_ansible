@@ -1,8 +1,0 @@
-slurm_role: compute
-nfs_client_mounts:
-  - src: "{{ nfs_server_host }}:{{ nfs_home_export }}"
-    path: /home
-    opts: "{{ nfs_mount_opts }}"
-  - src: "{{ nfs_server_host }}:{{ nfs_slurm_export }}"
-    path: /srv/slurm
-    opts: "{{ nfs_mount_opts }}"

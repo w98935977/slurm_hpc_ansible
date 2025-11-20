@@ -1,33 +1,4 @@
----
-# Defaults for infrastructure node services
-
-# NFS exports served from the infra node (override clients as needed)
-nfs_exports:
-  - path: /export/home
-    owner: root
-    group: root
-    mode: '0755'
-    clients:
-      - "10.250.6.0/23(rw,sync,no_root_squash,no_subtree_check,insecure)"
-  - path: /export/slurm
-    owner: slurm
-    group: slurm
-    mode: '0755'
-    clients:
-      - "10.250.6.0/23(rw,sync,no_root_squash,no_subtree_check,insecure)"
-
-# Slurm accounting database configuration
+slurm_role: infra
+slurmdbd_packages: []
+slurmdbd_db_password: "{{ vault_slurmdbd_db_password }}"
 slurmdbd_db_name: slurm_acct_db
-slurmdbd_db_user: slurm
-# 建議放在 inventory/vault/slurmdbd.yml (自行 ansible-vault 加密)
-slurmdbd_db_password: "{{ vault_slurmdbd_db_password | default('') }}"
-slurmdbd_log_file: /var/log/slurm/slurmdbd.log
-slurmdbd_dbd_port: 6819
-# Use auth/munge between slurmctld and slurmdbd; leave accounting pass empty unless required
-slurmdbd_accounting_pass: ''
-
-# Packages to install on the login/infra node
-login_node_packages:
-  - slurm-client
-  - munge
-  - nfs-common

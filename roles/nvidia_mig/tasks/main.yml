@@ -1,0 +1,96 @@
+---
+- name: Ensure nvidia-persistenced is enabled and running
+  ansible.builtin.service:
+    name: "{{ nvidia_persistence_service }}"
+    state: started
+    enabled: yes
+
+- name: Force enable persistence mode (required for MIG persistence)
+  ansible.builtin.command: nvidia-smi -pm 1
+  changed_when: false
+
+- name: Check current MIG mode for target GPUs
+  ansible.builtin.shell: |
+    nvidia-smi -i {{ item.gpu_index }} --query-gpu=mig.mode.current --format=csv,noheader
+  loop: "{{ nvidia_mig_config }}"
+  register: current_mig_status
+  changed_when: false
+  check_mode: no
+
+- name: Enable MIG mode if not enabled
+  ansible.builtin.command: |
+    nvidia-smi -i {{ item.item.gpu_index }} -mig 1
+  loop: "{{ current_mig_status.results }}"
+  when: 
+    - item.item.enable_mig | default(false)
+    - "'Enabled' not in item.stdout"
+  register: enable_mig_result
+
+# Note: Enabling MIG usually requires a GPU reset or reboot if it wasn't enabled before.
+# We try a reset first, but a reboot might be needed in some cases.
+- name: Reset GPU to apply MIG mode enable
+  ansible.builtin.command: |
+    nvidia-smi --gpu-reset -i {{ item.item.item.gpu_index }}
+  loop: "{{ enable_mig_result.results }}"
+  when: item.changed
+  failed_when: false # Reset can fail if processes are using the GPU
+
+- name: Clear existing MIG instances to apply new profile
+  ansible.builtin.command: |
+    nvidia-smi mig -i {{ item.gpu_index }} --destroy-compute-instance --destroy-gpu-instance
+  loop: "{{ nvidia_mig_config }}"
+  when: 
+    - item.enable_mig | default(false)
+    - item.profiles is defined
+    - item.profiles | length > 0
+  failed_when: false # Can fail if no instances exist
+  # This is a destructive action (clears existing MIGs), so we might want to be careful.
+  # For idempotency, a more complex check would be needed to see if current profiles match desired.
+  # For now, we assume if this role is run, we want to enforce the config.
+  # To make it safer/idempotent, we only run this if we are sure we want to re-configure.
+  # A simple approach: check if profiles exist.
+  
+- name: Create MIG instances
+  ansible.builtin.command: |
+    nvidia-smi mig -i {{ item.0.gpu_index }} --create-gpu-instance {{ item.1 }} --create-compute-instance
+  loop: "{{ nvidia_mig_config | subelements('profiles') }}"
+  when: 
+    - item.0.enable_mig | default(false)
+  register: create_mig_result
+  
+# Persistence:
+# nvidia-persistenced handles driver state, but MIG instances are lost on reboot 
+# unless recreated. The standard way is a systemd service or startup script.
+# We will create a systemd service that restores MIG configuration on boot.
+
+- name: Create script to restore MIG configuration
+  ansible.builtin.template:
+    src: restore-mig.sh.j2
+    dest: /usr/local/bin/restore-mig.sh
+    mode: '0755'
+
+- name: Create systemd service for MIG restoration
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/restore-mig.service
+    content: |
+      [Unit]
+      Description=Restore NVIDIA MIG Configuration
+      After=nvidia-persistenced.service
+      Requires=nvidia-persistenced.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/restore-mig.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: '0644'
+  notify: Restart nvidia-persistenced
+
+- name: Enable and start MIG restore service
+  ansible.builtin.systemd:
+    name: restore-mig.service
+    enabled: yes
+    state: started
+    daemon_reload: yes

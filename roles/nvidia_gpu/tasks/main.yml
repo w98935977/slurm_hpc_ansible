@@ -21,6 +21,7 @@
     name: "linux-headers-{{ ansible_kernel }}"
     state: present
     update_cache: yes
+    cache_valid_time: 3600
   register: headers_task
   when: nvidia_lspci.rc == 0
 
@@ -64,6 +65,7 @@
     name: ubuntu-drivers-common
     state: present
     update_cache: yes
+    cache_valid_time: 3600
   when: nvidia_lspci.rc == 0
 
 - name: Query recommended driver package
@@ -138,6 +140,7 @@
         name: "{{ nvidia_driver_pkg }}"
         state: present
         update_cache: yes
+        cache_valid_time: 3600
       register: install_driver
   rescue:
     - name: apt --fix-broken install (driver meta)
@@ -153,6 +156,7 @@
         name: "{{ nvidia_driver_pkg }}"
         state: present
         update_cache: yes
+        cache_valid_time: 3600
       register: install_driver_retry
   when: nvidia_lspci.rc == 0
 
@@ -162,6 +166,7 @@
         name: "{{ nvidia_utils_pkg }}"
         state: present
         update_cache: yes
+        cache_valid_time: 3600
       register: install_utils
   rescue:
     - name: apt --fix-broken install (utils)
@@ -177,6 +182,7 @@
         name: "{{ nvidia_utils_pkg }}"
         state: present
         update_cache: yes
+        cache_valid_time: 3600
       register: install_utils_retry
   when: nvidia_lspci.rc == 0
 
@@ -282,6 +288,7 @@
           - "{{ nvidia_open_common_pkg }}"
         state: present
         update_cache: yes
+        cache_valid_time: 3600
 
     - name: Install matching NVIDIA firmware for open modules (best effort)
       ansible.builtin.apt:

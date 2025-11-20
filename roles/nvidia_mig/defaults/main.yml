@@ -1,0 +1,14 @@
+---
+# Default MIG configuration for NVIDIA RTX 6000 Ada (PRO6000)
+# Format: list of GPU indices and their desired MIG profile
+# Example: Enable MIG and create 2x 24GB slices on GPU 0
+nvidia_mig_config: []
+  # Example:
+  # - gpu_index: 0
+  #   enable_mig: true
+  #   profiles:
+  #     - "2g.48gb"
+  #     - "2g.48gb"
+
+# Service name for persistence daemon
+nvidia_persistence_service: "nvidia-persistenced"

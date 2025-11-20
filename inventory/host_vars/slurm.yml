@@ -1,0 +1,16 @@
+---
+slurm_gres_name: "rtx"
+
+# MIG Configuration for this specific host
+nvidia_mig_config:
+  - gpu_index: 0
+    enable_mig: true
+    profiles:
+      - "2g.48gb"
+      - "2g.48gb"
+
+  - gpu_index: 1
+    enable_mig: true
+    profiles:
+      - "2g.48gb"
+      - "2g.48gb"

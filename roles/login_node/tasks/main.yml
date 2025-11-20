@@ -4,6 +4,7 @@
     name: "{{ login_node_packages }}"
     state: present
     update_cache: yes
+    cache_valid_time: 3600
 
 - name: Ensure MOTD directory exists
   ansible.builtin.file:
