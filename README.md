@@ -56,6 +56,24 @@ nvidia_mig_config:
       - "2g.48gb"
 ```
 
+## Deployment Flow
+
+```mermaid
+flowchart TB
+  U[Engineer on control node] --> C[Ansible control node]
+
+  C --> INV[Inventory + group_vars + host_vars]
+
+  C --> S1[Step 1: bootstrap_prepare.yml\nInit accounts, SSH, base config]
+  S1 --> S2[Step 2: setup_infra.yml\nNFS + SlurmDBD]
+  S2 --> S3[Step 3: enable_nvidia_gpu.yml\nNVIDIA driver / CUDA]
+  S3 --> S4[Step 4: setup_mig.yml\nGenerate MIG config from host_vars]
+  S4 --> S5[Step 5: setup_cluster.yml\nInstall Slurm + Munge, mount NFS]
+  S5 --> R[Ready: Slurm GPU/MIG cluster online]
+
+  INV -. used by all steps .-> S1
+```
+
 ## Deployment Workflow
 
 Run the playbooks in the following order:
