@@ -48,6 +48,9 @@ ctrl-node ansible_host=192.168.1.10
 
 [compute]
 gpu-node-01 ansible_host=192.168.1.20
+
+[infra]
+infra-node ansible_host=192.168.1.30
 ```
 
 *   **`inventory/production.ini`**: Used for **ALL** subsequent steps (Step 2-5).
