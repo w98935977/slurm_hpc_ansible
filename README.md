@@ -28,10 +28,31 @@ This Ansible project automates the deployment of a Slurm HPC cluster, featuring 
 ## Configuration
 
 ### 1. Inventory
-Define your hosts in `inventory/production.ini`:
-*   `[controller]`: Slurm controller node.
-*   `[compute]`: Compute nodes with GPUs.
-*   `[infra]`: Infrastructure node (NFS, Database).
+This project uses two inventory files:
+
+*   **`inventory/prepare.ini`**: Used **ONLY** for the initial bootstrap (Step 1).
+    *   Define the initial connection user (e.g., `ansible_user=ubuntu` or `root`) and password authentication method here.
+    *   This allows Ansible to connect to fresh nodes before SSH keys are set up.
+
+*   **`inventory/production.ini`**: Used for **ALL** subsequent steps (Step 2-5).
+    *   Define your cluster topology here:
+        *   `[controller]`: Slurm controller node.
+        *   `[compute]`: Compute nodes with GPUs.
+        *   `[infra]`: Infrastructure node (NFS, Database).
+    *   Ensure hostnames match your DNS or `/etc/hosts`.
+
+Example `inventory/production.ini`:
+```ini
+[controller]
+ctrl-node ansible_host=192.168.1.10
+
+[compute]
+gpu-node-01 ansible_host=192.168.1.20
+gpu-node-02 ansible_host=192.168.1.21
+
+[infra]
+infra-node ansible_host=192.168.1.30
+```
 
 ### 2. MIG Configuration (Per-Host)
 Configure MIG profiles in `inventory/host_vars/<hostname>.yml`. This configuration is used to generate a startup script (`/usr/local/sbin/configure-mig.sh`) that persists MIG settings across reboots.
@@ -81,7 +102,7 @@ Run the playbooks in the following order:
 ### Step 1: Bootstrap Nodes
 Initialize user accounts and SSH access.
 ```bash
-ansible-playbook -i inventory/prepare.ini playbooks/prepare/bootstrap_prepare.yml --ask-pass --ask-become-pass
+ansible-playbook -i inventory/prepare.ini playbooks/prepare/bootstrap_prepare.yml --vault-password-file ./inventory/vault/.ansible_vault_pass
 ```
 
 ### Step 2: Setup Infrastructure
