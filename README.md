@@ -25,6 +25,24 @@ This Ansible project automates the deployment of a Slurm HPC cluster, featuring 
 *   Target nodes accessible via SSH.
 *   `inventory/vault/.ansible_vault_pass` file containing the vault password.
 
+## Vault Setup
+
+This project uses Ansible Vault to secure sensitive data (passwords).
+
+1.  **Create the password file**:
+    ```bash
+    echo "your_secure_password" > inventory/vault/.ansible_vault_pass
+    chmod 600 inventory/vault/.ansible_vault_pass
+    ```
+
+2.  **Edit encrypted variables**:
+    ```bash
+    ansible-vault edit inventory/group_vars/all/vault.yml --vault-password-file inventory/vault/.ansible_vault_pass
+    ```
+    Set the following variables:
+    *   `vault_ansible_password`: Password for the `ansible` management user.
+    *   `vault_ansible_become_password`: Sudo password for the `ansible` user.
+
 ## Configuration
 
 ### 1. Inventory

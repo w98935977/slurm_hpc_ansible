@@ -1,5 +1,6 @@
 ---
-slurm_gres_name: "rtx"
+# slurm_gres_name is optional; Slurm role now auto-detects MIG profiles (e.g., gpu:2g.48gb)
+# slurm_gres_name: "gpu"
 
 # MIG Configuration for this specific host
 nvidia_mig_config:
