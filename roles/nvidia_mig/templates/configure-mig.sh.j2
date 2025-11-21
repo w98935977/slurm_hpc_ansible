@@ -1,0 +1,27 @@
+#!/bin/bash
+set -e
+
+# 1. Enable MIG mode (per configured GPU)
+{% for config in nvidia_mig_config %}
+{% if config.enable_mig %}
+echo "Enabling MIG on GPU {{ config.gpu_index }}..."
+/usr/bin/nvidia-smi -i {{ config.gpu_index }} -mig 1 || true
+{% endif %}
+{% endfor %}
+
+# 2. Wait for driver response
+echo "Waiting for driver..."
+sleep 5
+
+# 3. Create MIG GPU + Compute Instances
+{% for config in nvidia_mig_config %}
+{% if config.enable_mig %}
+echo "Configuring GPU {{ config.gpu_index }} with profiles: {{ config.profiles | join(',') }}"
+# Destroy existing instances first to ensure clean state (optional but recommended for idempotency)
+/usr/bin/nvidia-smi mig -i {{ config.gpu_index }} --destroy-compute-instance --destroy-gpu-instance || true
+# Create new instances
+/usr/bin/nvidia-smi mig -i {{ config.gpu_index }} -cgi {{ config.profiles | join(',') }} -C
+{% endif %}
+{% endfor %}
+
+echo "MIG configuration completed."

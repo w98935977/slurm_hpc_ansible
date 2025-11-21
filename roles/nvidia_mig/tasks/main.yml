@@ -59,28 +59,27 @@
   register: create_mig_result
   
 # Persistence:
-# nvidia-persistenced handles driver state, but MIG instances are lost on reboot 
-# unless recreated. The standard way is a systemd service or startup script.
-# We will create a systemd service that restores MIG configuration on boot.
+# Implemented based on user request: systemd service + script
+# Reference: /usr/local/sbin/configure-mig.sh and mig-config.service
 
-- name: Create script to restore MIG configuration
+- name: Create script to configure MIG
   ansible.builtin.template:
-    src: restore-mig.sh.j2
-    dest: /usr/local/bin/restore-mig.sh
+    src: configure-mig.sh.j2
+    dest: /usr/local/sbin/configure-mig.sh
     mode: '0755'
 
-- name: Create systemd service for MIG restoration
+- name: Create systemd service for MIG configuration
   ansible.builtin.copy:
-    dest: /etc/systemd/system/restore-mig.service
+    dest: /etc/systemd/system/mig-config.service
     content: |
       [Unit]
-      Description=Restore NVIDIA MIG Configuration
-      After=nvidia-persistenced.service
-      Requires=nvidia-persistenced.service
+      Description=Configure NVIDIA MIG at boot
+      After=multi-user.target nvidia-persistenced.service
+      Before=slurmd.service
 
       [Service]
       Type=oneshot
-      ExecStart=/usr/local/bin/restore-mig.sh
+      ExecStart=/usr/local/sbin/configure-mig.sh
       RemainAfterExit=yes
 
       [Install]
@@ -88,9 +87,9 @@
     mode: '0644'
   notify: Restart nvidia-persistenced
 
-- name: Enable and start MIG restore service
+- name: Enable and start MIG config service
   ansible.builtin.systemd:
-    name: restore-mig.service
+    name: mig-config.service
     enabled: yes
     state: started
     daemon_reload: yes

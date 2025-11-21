@@ -34,7 +34,8 @@ Define your hosts in `inventory/production.ini`:
 *   `[infra]`: Infrastructure node (NFS, Database).
 
 ### 2. MIG Configuration (Per-Host)
-Configure MIG profiles in `inventory/host_vars/<hostname>.yml`.
+Configure MIG profiles in `inventory/host_vars/<hostname>.yml`. This configuration is used to generate a startup script (`/usr/local/sbin/configure-mig.sh`) that persists MIG settings across reboots.
+
 Example (`inventory/host_vars/slurm.yml`):
 
 ```yaml
@@ -77,7 +78,7 @@ ansible-playbook -i inventory/production.ini playbooks/cluster/enable_nvidia_gpu
 ```
 
 ### Step 4: Configure MIG
-Apply MIG partitioning and enable persistence mode.
+Apply MIG partitioning and enable persistence mode via a systemd service (`mig-config.service`).
 ```bash
 ansible-playbook -i inventory/production.ini playbooks/infra/setup_mig.yml --vault-password-file ./inventory/vault/.ansible_vault_pass
 ```
@@ -107,4 +108,13 @@ nvidia-smi -L
 ## Maintenance
 
 *   **Teardown**: Use playbooks in `playbooks/teardown/` to remove components.
-*   **Update MIG**: Edit `host_vars`, then run `setup_mig.yml` followed by `setup_cluster.yml`.
+*   **Update MIG Profiles**:
+    1.  Edit `inventory/host_vars/<hostname>.yml` with the new profiles.
+    2.  Run the MIG setup playbook to update the persistence script and apply changes:
+        ```bash
+        ansible-playbook -i inventory/production.ini playbooks/infra/setup_mig.yml --vault-password-file ./inventory/vault/.ansible_vault_pass
+        ```
+    3.  (Optional) If the number of GPUs/MIGs changed, restart Slurm services to detect new resources:
+        ```bash
+        ansible-playbook -i inventory/production.ini playbooks/cluster/setup_cluster.yml --vault-password-file ./inventory/vault/.ansible_vault_pass
+        ```
