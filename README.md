@@ -34,6 +34,22 @@ This project uses two inventory files:
     *   Define the initial connection user (e.g., `ansible_user=ubuntu` or `root`) and password authentication method here.
     *   This allows Ansible to connect to fresh nodes before SSH keys are set up.
 
+Example `inventory/prepare.ini`:
+```ini
+[all:vars]
+# Initial user (e.g., ubuntu, root)
+ansible_user=ubuntu
+# Force password auth and ignore host keys for fresh install
+ansible_ssh_common_args='-o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no'
+ansible_ssh_private_key_file=
+
+[controller]
+ctrl-node ansible_host=192.168.1.10
+
+[compute]
+gpu-node-01 ansible_host=192.168.1.20
+```
+
 *   **`inventory/production.ini`**: Used for **ALL** subsequent steps (Step 2-5).
     *   Define your cluster topology here:
         *   `[controller]`: Slurm controller node.
