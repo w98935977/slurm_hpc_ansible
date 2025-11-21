@@ -2,12 +2,12 @@
 # Copy to inventory/production.ini and adjust hosts/IPs
 
 [controller]
-# hostname ansible_host=<mgmt_ip> ansible_user=<bootstrap_user>
-ctrl-1 ansible_host=10.0.0.10
+# hostname ansible_host=<mgmt_ip>
+ctrl-node ansible_host=192.168.1.10
 
 [compute]
-compute-1 ansible_host=10.0.0.21
-compute-2 ansible_host=10.0.0.22
+gpu-node-01 ansible_host=192.168.1.20
+gpu-node-02 ansible_host=192.168.1.21
 
 [infra]
-infra-1 ansible_host=10.0.0.30
+infra-node ansible_host=192.168.1.30

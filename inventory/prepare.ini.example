@@ -1,9 +1,20 @@
 # Sample prepare inventory
 # Copy to inventory/prepare.ini and adjust ansible_user / password vars if needed
 
-[all]
+[all:vars]
 # Set the temporary login user before bootstrap (e.g. vendor-provided admin)
 ansible_user=ubuntu
-# Uncomment if you need to override ssh key / password for initial login
+# Force password auth and ignore host keys for fresh install
+ansible_ssh_common_args='-o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no'
+ansible_ssh_private_key_file=
+# Uncomment if you need to override password for initial login
 # ansible_password=changeme
-# ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+[controller]
+ctrl-node ansible_host=192.168.1.10
+
+[compute]
+gpu-node-01 ansible_host=192.168.1.20
+
+[infra]
+infra-node ansible_host=192.168.1.30
