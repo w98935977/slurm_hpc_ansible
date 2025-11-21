@@ -291,32 +291,46 @@
   become: true
 
 # 計算節點偵測 GPU 張數（優先計算 MIG 實例，若無則算實體 GPU）
-- name: Detect GPU count on compute (MIG aware)
+- name: Detect GPU count and MIG profile on compute
   ansible.builtin.shell: |
     set -o pipefail
     # Count MIG instances
-    mig_cnt=$(/usr/bin/nvidia-smi mig -lgi 2>/dev/null | grep 'MIG' | wc -l || echo 0)
-    # If MIG instances found, use that count
+    mig_info=$(/usr/bin/nvidia-smi mig -lgi 2>/dev/null | grep 'MIG')
+    mig_cnt=$(echo "$mig_info" | wc -l)
+    
+    # Check if we actually have MIG output (wc -l outputs 0 even on empty input if piped, but grep might fail)
+    if [ -z "$mig_info" ]; then mig_cnt=0; fi
+
     if [ "$mig_cnt" -gt 0 ]; then
-      echo "$mig_cnt"
+      # Extract first profile name (e.g., 2g.48gb) assuming homogeneous config
+      # Table format: | GPU Name Profile ... | -> | 0 MIG 2g.48gb ... |
+      # awk columns: $1='|', $2='0', $3='MIG', $4='2g.48gb'
+      profile=$(echo "$mig_info" | head -n 1 | awk '{print $4}')
+      echo "count=$mig_cnt"
+      echo "profile=$profile"
     else
       # Otherwise count physical GPUs
-      /usr/bin/nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | wc -l || echo 0
+      phys_cnt=$(/usr/bin/nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | wc -l || echo 0)
+      echo "count=$phys_cnt"
+      echo "profile="
     fi
   args: { executable: /bin/bash }
-  register: _gpu_cnt
+  register: _gpu_detect
   changed_when: false
   failed_when: false
   when: "'compute' in group_names"
 
-- name: Debug detected GPU count
-  ansible.builtin.debug:
-    var: _gpu_cnt.stdout
-  when: "'compute' in group_names"
-
-- name: Set gpu_count fact for template
+- name: Set GPU facts
   ansible.builtin.set_fact:
-    gpu_count: "{{ (_gpu_cnt.stdout | default('0')) | int }}"
+    gpu_count: "{{ (_gpu_detect.stdout_lines | select('match', '^count=') | first | split('=') | last | int) }}"
+    slurm_mig_profile: "{{ (_gpu_detect.stdout_lines | select('match', '^profile=') | first | split('=') | last | trim) }}"
+  when: 
+    - "'compute' in group_names"
+    - _gpu_detect.rc == 0
+
+- name: Debug detected GPU info
+  ansible.builtin.debug:
+    msg: "Detected {{ gpu_count }} GPUs/MIGs. Profile: {{ slurm_mig_profile | default('None') }}"
   when: "'compute' in group_names"
 
 - name: Deploy gres.conf (explicit /dev mapping)

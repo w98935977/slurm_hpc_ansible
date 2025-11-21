@@ -62,7 +62,9 @@ Sockets={{ (hostvars[host].slurm_sockets | default(1)) | int }} \
 CoresPerSocket={{ (hostvars[host].slurm_cores_per_socket | default(1)) | int }} \
 ThreadsPerCore={{ (hostvars[host].slurm_threads_per_core | default(1)) | int }} \
 RealMemory={{ (hostvars[host].slurm_real_mem | default(1024)) | int }}{% if (hostvars[host].gpu_count | default(0) | int) > 0 %} \
-Gres={{ hostvars[host].slurm_gres_name | default('gpu') }}:{{ (hostvars[host].gpu_count | int) }}{% endif %} \
+{% if hostvars[host].slurm_mig_profile is defined and hostvars[host].slurm_mig_profile %}
+Gres=gpu:{{ hostvars[host].slurm_mig_profile }}:{{ (hostvars[host].gpu_count | int) }}{% else %}
+Gres={{ hostvars[host].slurm_gres_name | default('gpu') }}:{{ (hostvars[host].gpu_count | int) }}{% endif %}{% endif %} \
 State=UNKNOWN
 {% endfor %}
 
