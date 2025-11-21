@@ -40,7 +40,8 @@ Example (`inventory/host_vars/slurm.yml`):
 
 ```yaml
 ---
-slurm_gres_name: "rtx"  # Resource name in Slurm (e.g., gres=rtx:1)
+# slurm_gres_name is optional; Slurm role now auto-detects MIG profiles (e.g., gpu:2g.48gb)
+# slurm_gres_name: "gpu" 
 
 nvidia_mig_config:
   - gpu_index: 0
@@ -92,16 +93,16 @@ ansible-playbook -i inventory/production.ini playbooks/cluster/setup_cluster.yml
 
 ## Verification
 
-Log in to the controller node and check the cluster status:
+Log in to the controller node and check the cluster status. You should see the specific MIG profile in the GRES column:
 
 ```bash
 sinfo -N -o "%N %G %t"
-# Expected output: slurm rtx:4 idle
+# Expected output example: slurm gpu:2g.48gb:4(S:0-1) idle
 ```
 
-Submit a test job:
+Submit a test job requesting a specific MIG slice:
 ```bash
-srun --gres=rtx:1 --pty /bin/bash
+srun --gres=gpu:2g.48gb:1 --pty /bin/bash
 nvidia-smi -L
 ```
 
