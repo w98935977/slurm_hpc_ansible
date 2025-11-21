@@ -32,6 +32,7 @@ This project uses two inventory files:
 
 *   **`inventory/prepare.ini`**: Used **ONLY** for the initial bootstrap (Step 1).
     *   Define the initial connection user (e.g., `ansible_user=ubuntu` or `root`) and password authentication method here.
+    *   **Note**: This `ansible_user` must be an existing user on the target nodes with `sudo` privileges (root access) to allow Ansible to install packages and create the management user.
     *   This allows Ansible to connect to fresh nodes before SSH keys are set up.
 
 Example `inventory/prepare.ini`:
@@ -59,6 +60,7 @@ infra-node ansible_host=192.168.1.30
         *   `[compute]`: Compute nodes with GPUs.
         *   `[infra]`: Infrastructure node (NFS, Database).
     *   Ensure hostnames match your DNS or `/etc/hosts`.
+    *   **Note**: These steps use the `mgmt_user` (default: `ansible`) defined in `inventory/group_vars/all/main.yml`. This user is automatically created and configured with SSH keys during Step 1.
 
 Example `inventory/production.ini`:
 ```ini

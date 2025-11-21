@@ -2,7 +2,8 @@
 # Copy to inventory/prepare.ini and adjust ansible_user / password vars if needed
 
 [all:vars]
-# Set the temporary login user before bootstrap (e.g. vendor-provided admin)
+# Set the temporary login user before bootstrap (e.g. vendor-provided admin like 'ubuntu' or 'root')
+# This user MUST have sudo privileges on the target machine.
 ansible_user=ubuntu
 # Force password auth and ignore host keys for fresh install
 ansible_ssh_common_args='-o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no'
